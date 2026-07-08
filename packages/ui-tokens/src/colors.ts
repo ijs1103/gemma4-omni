@@ -1,0 +1,35 @@
+export const colors = {
+  // HSL Tailored sleak dark colors
+  dark: {
+    bg: '#090a10',
+    cardBg: 'rgba(20, 22, 34, 0.65)',
+    cardBorder: 'rgba(255, 255, 255, 0.07)',
+    text: '#94a3b8',
+    textLight: '#f8fafc',
+    textMuted: '#64748b',
+    accent: '#6366f1',
+    accentGlow: 'rgba(99, 102, 241, 0.15)',
+    accentBorder: 'rgba(99, 102, 241, 0.4)',
+    success: '#10b981',
+    successGlow: 'rgba(16, 185, 129, 0.15)',
+    danger: '#f43f5e',
+    dangerGlow: 'rgba(244, 63, 94, 0.15)',
+    warning: '#f59e0b',
+  },
+  light: {
+    bg: '#f8fafc',
+    cardBg: 'rgba(255, 255, 255, 0.8)',
+    cardBorder: 'rgba(0, 0, 0, 0.05)',
+    text: '#475569',
+    textLight: '#0f172a',
+    textMuted: '#94a3b8',
+    accent: '#4f46e5',
+    accentGlow: 'rgba(79, 70, 229, 0.1)',
+    accentBorder: 'rgba(79, 70, 229, 0.2)',
+    success: '#059669',
+    successGlow: 'rgba(5, 150, 105, 0.1)',
+    danger: '#e11d48',
+    dangerGlow: 'rgba(225, 29, 72, 0.1)',
+    warning: '#d97706',
+  }
+};

@@ -1,0 +1,57 @@
+# Resolve react_native_pods.rb with node to allow for hoisting
+require Pod::Executable.execute_command('node', ['-p',
+  'require.resolve(
+    "react-native/scripts/react_native_pods.rb",
+    {paths: [process.argv[1]]},
+  )', __dir__]).strip
+
+platform :ios, min_ios_version_supported
+prepare_react_native_project!
+
+linkage = ENV['USE_FRAMEWORKS']
+if linkage != nil
+  Pod::UI.puts "Configuring Pod with #{linkage}ally linked Frameworks".green
+  use_frameworks! :linkage => linkage.to_sym
+end
+
+# [LiteRT-LM iOS] SPM 패키지 수동 추가 필수!
+# Xcode → mobile.xcworkspace 열기 → File → Add Package Dependencies
+# URL: https://github.com/google-ai-edge/LiteRT-LM
+# Branch: main (또는 최신 stable 태그)
+# Target: mobile
+# CocoaPods와 SPM은 공존 가능하며, React Native Pods와 충돌하지 않습니다.
+
+target 'mobile' do
+  config = use_native_modules!
+
+  use_react_native!(
+    :path => config[:reactNativePath],
+    # An absolute path to your application root.
+    :app_path => "#{Pod::Config.instance.installation_root}/.."
+  )
+
+  post_install do |installer|
+    react_native_post_install(
+      installer,
+      config[:reactNativePath],
+      :mac_catalyst_enabled => false,
+      # :ccache_enabled => true
+    )
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+      end
+
+      # react-native-quick-sqlite 자체 sqlite3.c를 제외하고 시스템 SQLite 사용
+      # → AsyncStorage(SharedAsyncStorage)와의 sqlite3 심볼 중복 링커 에러 해결
+      if target.name == 'react-native-quick-sqlite'
+        target.build_configurations.each do |config|
+          config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -lsqlite3'
+          config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = '$(inherited) SQLITE_THREADSAFE=0'
+          # sqlite3.c를 소스에서 제거하고 시스템 라이브러리로 대체
+          config.build_settings['EXCLUDED_SOURCE_FILE_NAMES'] = 'sqlite3.c'
+        end
+      end
+    end
+  end
+end
