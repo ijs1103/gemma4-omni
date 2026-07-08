@@ -9,6 +9,7 @@ build/
 .next/
 out/
 .expo/
+.antigravity/
 
 # Android build outputs
 android/app/build/
