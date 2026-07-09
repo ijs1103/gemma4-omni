@@ -52,7 +52,8 @@ function getStorage(): MobileStorageAdapter {
 
 // ─── [전략 A: Soft Stop] 정지 후 백그라운드 정리 상태 감지용 이벤트 브릿지 ──────
 // LiteRTModule이 발송하는 onGenerationInterrupted / onGenerationSettled를 직접 구독한다.
-// - onGenerationInterrupted: 정지 버튼을 눌러 화면 표시가 멈춘 시점 (네이티브 생성은 아직 백그라운드에서 진행 중일 수 있음)
+// - onGenerationInterrupted: 네이티브가 실제로 중단을 반영한 시점
+//   (전략 B 적용 후에는 항상 decode 단계 진입 후에만 발생 — prefill 중 발생하지 않음)
 // - onGenerationSettled: 네이티브 생성이 실제로 완전히 끝나 "새 질문을 보내도 안전한" 시점
 // 이 신호를 기반으로 정지 직후~완전 정리 전까지 입력을 잠가서, BUSY 에러가 사용자에게 노출되는 상황 자체를 예방한다.
 const LiteRTNativeModule = NativeModules.LiteRT;
@@ -171,6 +172,9 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   // [전략 A 추가] 정지 버튼을 누른 뒤부터 onGenerationSettled를 받기 전까지 true.
   // 이 구간 동안은 새 질문 전송을 UI 레벨에서 차단해서 BUSY 에러 노출을 예방한다.
   const [isSettling, setIsSettling] = useState(false);
+  // [전략 B 추가] 정지 버튼을 눌렀지만 아직 prefill 중이라 네이티브 중단 호출이
+  // "예약"만 되어있는 상태. 첫 토큰이 도착해 실제 interrupt가 실행되면 false로 전환된다.
+  const [isDeferredStop, setIsDeferredStop] = useState(false);
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const [hasKeyboardOpened, setHasKeyboardOpened] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -200,19 +204,23 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   useEffect(() => { sessionCreatedAtRef.current = sessionCreatedAt; }, [sessionCreatedAt]);
 
   // ─── [전략 A 추가] 정지 후 백그라운드 정리 상태 구독 ──────────────────────
-  // onGenerationInterrupted: 정지 시점 → 입력 잠금 시작
+  // onGenerationInterrupted: 네이티브가 실제로 중단을 반영한 시점 → 입력 잠금 시작
+  //   (전략 B 적용 후에는 이 이벤트가 항상 decode 진입 후에만 발생하므로,
+  //    "정지 예약(isDeferredStop)" 상태도 여기서 함께 해제한다.)
   // onGenerationSettled: 네이티브 정리 완료 시점 → 입력 잠금 해제
   useEffect(() => {
     const interruptedSub = liteRTLifecycleEmitter?.addListener(
       'onGenerationInterrupted',
       () => {
         setIsSettling(true);
+        setIsDeferredStop(false);
       },
     );
     const settledSub = liteRTLifecycleEmitter?.addListener(
       'onGenerationSettled',
       () => {
         setIsSettling(false);
+        setIsDeferredStop(false);
       },
     );
     return () => {
@@ -389,7 +397,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
             console.error('Failed to read document text', e);
           }
         }
-        
+
         setPendingAttachments((prev) => [
           ...prev,
           {
@@ -446,7 +454,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   // 커스텀 헤더 높이 계산 (ChatHeader 56px + modelStatusHeader 약 40px + 노치/상태바 높이)
   const headerHeight = 56 + 40 + insets.top;
 
-  // 고정 높이 사용: KAV 내부 컨텐츠의 높이가 변하면 iOS에서 두 번째 포커스 시점부터 
+  // 고정 높이 사용: KAV 내부 컨텐츠의 높이가 변하면 iOS에서 두 번째 포커스 시점부터
   // 여백이 비정상적으로 누적되는 버그(baseline accumulation)를 방지하기 위함입니다.
   const bottomOffset = 12;
 
@@ -737,7 +745,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
 
   // ── 생성 중단(Interrupt) 핸들러 ──────────────────────────────────────────────
   const handleInterrupt = async () => {
-    console.log(`[LiteRTPerf] ⏹ Stop button tapped at ${Date.now()}`);  // ← 추가
+    console.log(`[LiteRTPerf] ⏹ Stop button tapped at ${Date.now()}`);
     console.log('[ChatRoom] Interrupt requested');
 
     // sendMessage 완료 코드가 이 값을 보고 isInterrupted를 포함시킴
@@ -770,9 +778,16 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       );
     });
 
-    // 네이티브 중단 호출
+    // [전략 B 추가] 네이티브 중단 호출 — adapter가 내부적으로
+    // "아직 prefill 중이면 예약만 하고, 첫 토큰 도착 시 실제 실행"하도록 처리한다.
+    // interrupt()는 인터페이스 계약(Promise<void>)을 지키므로,
+    // 예약 여부는 별도 getter(wasInterruptDeferred)로 즉시 확인한다.
     try {
       await getModelAdapter().interrupt();
+      if (getModelAdapter().wasInterruptDeferred) {
+        console.log('[ChatRoom] ⏳ Interrupt deferred until TTFT (still in prefill)');
+        setIsDeferredStop(true);
+      }
     } catch (e) {
       console.error('[ChatRoom] Interrupt failed:', e);
     }
@@ -832,9 +847,11 @@ export default function ChatRoomScreen({ route, navigation }: any) {
           <Text style={[styles.modelStatusText, { color: colors.text }]}>
             {modelState.status === 'downloading' && `온디바이스 LLM 다운로드 중... (${(modelState as any).progress}%)`}
             {modelState.status === 'loading' && '모델 메모리 적재 중...'}
+            {/* [전략 B 추가] prefill 중 정지 눌러서 아직 실제 중단이 예약된 상태 */}
+            {modelState.status === 'ready' && isDeferredStop && '정지 예약됨 · 첫 응답 대기 중...'}
             {/* [전략 A 추가] 정지 후 백그라운드 정리 중임을 사용자에게 알림 */}
-            {modelState.status === 'ready' && isSettling && '이전 응답 정리 중...'}
-            {modelState.status === 'ready' && !isSettling && 'Gemma 4 E4B (Local 추론 준비 완료)'}
+            {modelState.status === 'ready' && !isDeferredStop && isSettling && '이전 응답 정리 중...'}
+            {modelState.status === 'ready' && !isDeferredStop && !isSettling && 'Gemma 4 E4B (Local 추론 준비 완료)'}
             {modelState.status === 'idle' && '대기 중...'}
           </Text>
         </View>
@@ -1352,7 +1369,7 @@ const styles = StyleSheet.create({
     color: '#9e9e9e',
     fontSize: 12,
     lineHeight: 16,
-    // 다음 새 메시지와의 간격을 확보하는 햄심 여백
+    // 다음 새 메시지와의 간격을 확보하는 핵심 여백
     marginBottom: 4,
   },
   attachmentsPreviewContainer: {
@@ -1447,7 +1464,7 @@ const dynamicStyles = StyleSheet.create({
     // 순수 검은 배경(#000000)과 구분되는 어두운 회색으로 공간감 부여
     backgroundColor: '#1E1E1E',
     borderColor: '#333333',
-  }
+  },
 });
 
 const markdownStylesLight = StyleSheet.create({
