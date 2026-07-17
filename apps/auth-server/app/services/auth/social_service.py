@@ -9,6 +9,7 @@ PKCE(Proof Key for Code Exchange)를 사용하여 인가 코드 탈취 공격을
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import base64
 import hashlib
@@ -85,10 +86,10 @@ class SocialAuthService:
 
     def __init__(
         self,
-        user_repository: UserRepository | None = None,
-        social_repository: SocialAccountRepository | None = None,
-        session_service: SessionService | None = None,
-        token_svc: TokenService | None = None,
+        user_repository: Optional[UserRepository] = None,
+        social_repository: Optional[SocialAccountRepository] = None,
+        session_service: Optional[SessionService] = None,
+        token_svc: Optional[TokenService] = None,
     ):
         self._user_repo = user_repository or user_repo
         self._social_repo = social_repository or social_account_repo
@@ -182,8 +183,8 @@ class SocialAuthService:
         provider: str,
         payload: SocialCallbackRequest,
         db: AsyncSession,
-        device_info: str | None = None,
-        ip_address: str | None = None,
+        device_info: Optional[str] = None,
+        ip_address: Optional[str] = None,
     ) -> AuthSessionResponse:
         """소셜 로그인 콜백을 처리하여 사용자를 인증/가입하고 세션을 발급한다.
 
@@ -214,7 +215,7 @@ class SocialAuthService:
         adapter = get_provider(provider)
 
         # ── 1. State 검증 ────────────────────────────────────────
-        code_verifier: str | None = None
+        code_verifier: Optional[str] = None
 
         if payload.state:
             redis = self._get_redis()

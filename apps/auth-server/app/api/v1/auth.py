@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from pydantic import BaseModel
@@ -33,13 +33,20 @@ class SocialStartQuery(BaseModel):
     platform: str
 
 
+from fastapi import Response
+
 @router.get("/social/{provider}/start", response_model=SocialStartResponse)
 async def start_login(
     provider: str,
     redirect_uri: str,
     platform: str,
+    response: Response,
 ) -> SocialStartResponse:
     """소셜 로그인 시작 (authorize URL 반환)."""
+    # 브라우저가 이전 state를 캐싱하여 재사용하는 것을 방지
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return await social_auth_service.start_login(
         provider=provider,
         redirect_uri=redirect_uri,
@@ -91,8 +98,8 @@ async def auth_callback(
 async def refresh_token(
     db: SessionDep,
     response: Response,
-    payload: RefreshRequest | None = None,
-    refresh_token_cookie: Annotated[str | None, Cookie(alias="refresh_token")] = None,
+    payload: Optional[RefreshRequest] = None,
+    refresh_token_cookie: Annotated[Optional[str], Cookie(alias="refresh_token")] = None,
 ) -> RefreshResponse:
     """액세스 토큰 갱신 (Refresh Token Rotation)."""
     # RN 등에서 body로 보낸 토큰 또는 웹에서 쿠키로 보낸 토큰 확인

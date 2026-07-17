@@ -5,8 +5,10 @@
 동일 프로바이더의 같은 사용자가 중복 등록되지 않도록 보장한다.
 """
 
+from typing import Optional
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from sqlalchemy import Boolean, ForeignKey, Index, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -40,9 +42,9 @@ class SocialAccount(Base):
     )
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    provider_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    email_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    raw_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    provider_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_verified: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    raw_profile: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     linked_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(UTC),
@@ -54,7 +56,7 @@ class SocialAccount(Base):
         "User",
         back_populates="social_accounts",
     )
-    credential: Mapped["OAuthCredential | None"] = relationship(
+    credential: Mapped[Optional["OAuthCredential"]] = relationship(
         "OAuthCredential",
         back_populates="social_account",
         uselist=False,

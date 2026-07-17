@@ -7,9 +7,11 @@ Refresh Token Rotation 패턴으로 세션을 생성·갱신·폐기한다.
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timezone, timedelta
+UTC = timezone.utc
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +49,8 @@ class SessionService:
 
     def __init__(
         self,
-        session_repository: SessionRepository | None = None,
-        token_svc: TokenService | None = None,
+        session_repository: Optional[SessionRepository] = None,
+        token_svc: Optional[TokenService] = None,
     ):
         self._session_repo = session_repository or session_repo
         self._token_service = token_svc or token_service
@@ -59,8 +61,8 @@ class SessionService:
         user_id: UUID,
         refresh_token: str,
         provider: str,
-        device_info: str | None = None,
-        ip_address: str | None = None,
+        device_info: Optional[str] = None,
+        ip_address: Optional[str] = None,
     ) -> AuthSession:
         """새로운 인증 세션을 생성한다.
 

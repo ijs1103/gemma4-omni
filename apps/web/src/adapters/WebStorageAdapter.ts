@@ -98,6 +98,17 @@ export class WebStorageAdapter implements StorageAdapter {
     });
   }
 
+  async clearAll(): Promise<void> {
+    const db = await this.dbPromise;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(this.storeName, 'readwrite');
+      const store = tx.objectStore(this.storeName);
+      store.clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   async saveSettings(key: string, value: unknown): Promise<void> {
     try {
       localStorage.setItem(`settings:${key}`, JSON.stringify(value));

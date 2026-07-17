@@ -4,8 +4,10 @@
 리프레시 토큰은 해시값만 저장하며, Refresh Token Rotation 패턴을 지원한다.
 """
 
+from typing import Optional
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -44,8 +46,8 @@ class AuthSession(Base):
         unique=True,
         nullable=False,
     )
-    device_info: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    device_info: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     is_revoked: Mapped[bool] = mapped_column(
         Boolean,
         default=False,

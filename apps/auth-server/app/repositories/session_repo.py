@@ -4,6 +4,7 @@ auth_sessions 테이블에 대한 비동기 CRUD 작업을 제공한다.
 리프레시 토큰 회전(Refresh Token Rotation) 방식으로 세션을 관리한다.
 """
 
+from typing import Optional
 from datetime import datetime
 from uuid import UUID
 
@@ -22,8 +23,8 @@ class SessionRepository:
         *,
         user_id: UUID,
         refresh_token_hash: str,
-        device_info: str | None = None,
-        ip_address: str | None = None,
+        device_info: Optional[str] = None,
+        ip_address: Optional[str] = None,
         expires_at: datetime,
     ) -> AuthSession:
         """새로운 인증 세션을 생성한다.
@@ -54,7 +55,7 @@ class SessionRepository:
         self,
         db: AsyncSession,
         refresh_token_hash: str,
-    ) -> AuthSession | None:
+    ) -> Optional[AuthSession]:
         """리프레시 토큰 해시로 활성 세션을 조회한다.
 
         취소되지 않은(revoked_at IS NULL) 세션만 반환한다.

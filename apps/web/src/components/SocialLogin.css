@@ -1,0 +1,222 @@
+/* SocialLogin.css */
+.social-login-container {
+  /* 화면 전체를 덮도록 (단, 앱의 기본 배경색 상속) */
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg); /* 기존 테마 배경색 상속 */
+  color: var(--text-light); /* 기존 테마 텍스트 색상 */
+  font-family: inherit;
+}
+
+/* 상단 영역 */
+.social-login-header {
+  padding: 24px;
+  display: flex;
+  align-items: center;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 중앙 메인 영역 */
+.social-login-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.social-login-content {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.social-login-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.social-login-subtitle {
+  font-size: 15px;
+  color: var(--text-muted);
+  margin-bottom: 40px;
+}
+
+/* 로그인 버튼 래퍼 */
+.social-buttons-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 공통 소셜 로그인 버튼 */
+.btn-social {
+  width: 100%;
+  border-radius: 12px;
+  padding: 14px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 24px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, box-shadow 0.2s;
+  border: 1px solid transparent;
+}
+
+/* 구글 로그인 버튼 */
+.btn-google {
+  background-color: #ffffff;
+  color: #3c4043;
+  border-color: #dadce0;
+}
+
+.btn-google:hover {
+  background-color: #f8f9fa;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.3);
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* 카카오 로그인 버튼 */
+.btn-kakao {
+  background-color: #FEE500;
+  color: #000000;
+}
+
+.btn-kakao:hover {
+  background-color: #f4dc00;
+}
+
+/* 네이버 로그인 버튼 */
+.btn-naver {
+  background-color: #03C75A;
+  color: #ffffff;
+}
+
+.btn-naver:hover {
+  background-color: #02b350;
+}
+
+/* 애플 로그인 버튼 */
+.btn-apple {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+.btn-apple:hover {
+  background-color: #1a1a1a;
+}
+
+/* 하단 앱스토어 영역 */
+.social-login-footer {
+  padding: 24px;
+  display: flex;
+  justify-content: flex-end; /* 우측 하단 정렬 */
+}
+
+.app-store-badges {
+  display: flex;
+  gap: 12px;
+}
+
+.store-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #000000;
+  border: 1px solid #333333;
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.store-badge:hover {
+  background-color: #1a1a1a;
+}
+
+.store-badge-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.1;
+}
+
+.store-badge-text .small {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.store-badge-text .large {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ── 로딩/비활성 상태 ───────────────────────────── */
+.btn-social:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.close-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* 로딩 스피너 */
+.btn-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(255, 255, 255, 0.3);
+  border-top: 2.5px solid #ffffff;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
+
+.btn-spinner-dark {
+  border-color: rgba(0, 0, 0, 0.15);
+  border-top-color: #000000;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}

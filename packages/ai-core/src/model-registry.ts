@@ -33,9 +33,9 @@ export const MODEL_REGISTRY: Record<string, ModelRegistryEntry> = {
     },
     platforms: {
       web: {
-        runtime: 'webllm',
-        runtimeModelId: 'gemma3-1b-it-q4f16_1-MLC',
-        downloadSizeMb: 900,
+        runtime: 'litert-lm',
+        runtimeModelId: 'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.litertlm',
+        downloadSizeMb: 1800,
         minRamGb: 6,
       },
       ios: {
@@ -45,6 +45,26 @@ export const MODEL_REGISTRY: Record<string, ModelRegistryEntry> = {
       android: {
         runtime: 'litert-lm',
         runtimeModelId: 'gemma-4-e4b-it-litert-android',
+      },
+    },
+  },
+  'gemma4-e2b': {
+    label: 'Gemma 4 E2B',
+    spec: {
+      id: 'gemma4-e2b',
+      family: 'gemma',
+      variant: '4-e2b',
+      quant: 'q4f16_1',
+      contextWindow: 32768,
+      supportsVision: false,
+      supportsTools: false,
+    },
+    platforms: {
+      web: {
+        runtime: 'litert-lm',
+        runtimeModelId: 'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm',
+        downloadSizeMb: 900,
+        minRamGb: 4,
       },
     },
   },

@@ -18,9 +18,15 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+from app.core.config import settings
+from app.db.base import Base
+# Make sure models are imported so they register with Base.metadata
+import app.models  # noqa
+
+target_metadata = Base.metadata
+
+# Override sqlalchemy.url with our settings
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

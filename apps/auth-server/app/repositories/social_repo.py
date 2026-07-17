@@ -3,6 +3,7 @@
 social_accounts 테이블에 대한 비동기 CRUD 작업을 제공한다.
 """
 
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -19,7 +20,7 @@ class SocialAccountRepository:
         db: AsyncSession,
         provider: str,
         provider_user_id: str,
-    ) -> SocialAccount | None:
+    ) -> Optional[SocialAccount]:
         """제공자와 제공자측 사용자 ID로 소셜 계정을 조회한다.
 
         Args:
@@ -62,9 +63,9 @@ class SocialAccountRepository:
         user_id: UUID,
         provider: str,
         provider_user_id: str,
-        provider_email: str | None = None,
-        email_verified: bool | None = None,
-        raw_profile: dict | None = None,
+        provider_email: Optional[str] = None,
+        email_verified: Optional[bool] = None,
+        raw_profile: Optional[dict] = None,
     ) -> SocialAccount:
         """새로운 소셜 계정을 생성한다.
 

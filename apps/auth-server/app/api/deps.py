@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import Depends, Request
@@ -21,7 +21,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 async def get_current_user(
     db: SessionDep,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)]
 ) -> User:
     """헤더의 JWT를 검증하고 현재 인증된 사용자를 반환한다.
     

@@ -5,8 +5,10 @@
 social_account_id를 기본키이자 외래키로 사용한다.
 """
 
+from typing import Optional
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -35,12 +37,12 @@ class OAuthCredential(Base):
         primary_key=True,
     )
 
-    access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
-    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
-    id_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
-    token_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    scope: Mapped[str | None] = mapped_column(Text, nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(
+    access_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    refresh_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    id_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    scope: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

@@ -4,6 +4,7 @@ oauth_credentials 테이블에 대한 비동기 CRUD 작업을 제공한다.
 제공자로부터 받은 토큰(access, refresh, id_token 등)을 암호화하여 저장·갱신한다.
 """
 
+from typing import Optional
 from datetime import datetime
 from uuid import UUID
 
@@ -20,7 +21,7 @@ class OAuthCredentialRepository:
         self,
         db: AsyncSession,
         social_account_id: UUID,
-    ) -> OAuthCredential | None:
+    ) -> Optional[OAuthCredential]:
         """소셜 계정 ID로 OAuth 자격증명을 조회한다.
 
         Args:
@@ -41,12 +42,12 @@ class OAuthCredentialRepository:
         db: AsyncSession,
         *,
         social_account_id: UUID,
-        access_token_enc: str | None = None,
-        refresh_token_enc: str | None = None,
-        id_token_enc: str | None = None,
-        token_type: str | None = None,
-        scope: str | None = None,
-        expires_at: datetime | None = None,
+        access_token_enc: Optional[str] = None,
+        refresh_token_enc: Optional[str] = None,
+        id_token_enc: Optional[str] = None,
+        token_type: Optional[str] = None,
+        scope: Optional[str] = None,
+        expires_at: Optional[datetime] = None,
     ) -> OAuthCredential:
         """OAuth 자격증명을 생성하거나 기존 레코드를 갱신한다 (upsert).
 

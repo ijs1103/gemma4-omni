@@ -7,6 +7,7 @@ Google OAuth 2.0 + OpenID Connect 흐름을 구현한다.
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import logging
 from urllib.parse import urlencode
@@ -41,9 +42,9 @@ class GoogleAdapter(SocialProviderAdapter):
     async def build_authorize_url(
         self,
         state: str,
-        nonce: str | None,
+        nonce: Optional[str],
         redirect_uri: str,
-        code_challenge: str | None = None,
+        code_challenge: Optional[str] = None,
     ) -> str:
         """Google OAuth 인가 URL을 생성한다."""
         params: dict[str, str] = {
@@ -67,7 +68,7 @@ class GoogleAdapter(SocialProviderAdapter):
         self,
         code: str,
         redirect_uri: str,
-        code_verifier: str | None = None,
+        code_verifier: Optional[str] = None,
     ) -> dict:
         """Google 토큰 엔드포인트에서 인가 코드를 토큰으로 교환한다."""
         data: dict[str, str] = {
@@ -91,7 +92,7 @@ class GoogleAdapter(SocialProviderAdapter):
 
         return resp.json()
 
-    async def fetch_profile(self, token_set: dict) -> dict | None:
+    async def fetch_profile(self, token_set: dict) -> Optional[dict]:
         """Google 사용자 프로필을 조회한다.
 
         id_token이 있으면 디코딩하여 프로필을 추출한다.
@@ -132,7 +133,7 @@ class GoogleAdapter(SocialProviderAdapter):
     async def normalize_profile(
         self,
         token_set: dict,
-        profile: dict | None,
+        profile: Optional[dict],
     ) -> NormalizedSocialProfile:
         """Google 프로필을 NormalizedSocialProfile로 변환한다."""
         if not profile:

@@ -3,6 +3,7 @@
 users 테이블에 대한 비동기 CRUD 작업을 제공한다.
 """
 
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -14,7 +15,7 @@ from app.models.user import User
 class UserRepository:
     """사용자 모델에 대한 데이터 액세스 메서드를 제공하는 리포지토리."""
 
-    async def get_by_id(self, db: AsyncSession, user_id: UUID) -> User | None:
+    async def get_by_id(self, db: AsyncSession, user_id: UUID) -> Optional[User]:
         """사용자 ID로 사용자를 조회한다.
 
         Args:
@@ -32,9 +33,9 @@ class UserRepository:
         self,
         db: AsyncSession,
         *,
-        display_name: str | None = None,
-        primary_email: str | None = None,
-        profile_image_url: str | None = None,
+        display_name: Optional[str] = None,
+        primary_email: Optional[str] = None,
+        profile_image_url: Optional[str] = None,
     ) -> User:
         """새로운 사용자를 생성한다.
 
@@ -60,7 +61,7 @@ class UserRepository:
         self,
         db: AsyncSession,
         user: User,
-        **kwargs: str | None,
+        **kwargs: Optional[str],
     ) -> User:
         """사용자 정보를 부분 업데이트한다.
 

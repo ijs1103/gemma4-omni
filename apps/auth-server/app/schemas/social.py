@@ -4,6 +4,7 @@
 일관된 형태로 변환하기 위한 중간 표현 스키마를 정의한다.
 """
 
+from typing import Optional
 from pydantic import BaseModel
 
 from app.schemas.auth import Provider
@@ -22,31 +23,31 @@ class NormalizedSocialProfile(BaseModel):
     provider_user_id: str
     """제공자 측 고유 사용자 ID (provider + provider_user_id로 유일성 보장)."""
 
-    email: str | None = None
+    email: Optional[str] = None
     """이메일 주소. 제공자에 따라 없을 수 있음."""
 
-    email_verified: bool | None = None
+    email_verified: Optional[bool] = None
     """이메일 인증 여부."""
 
-    display_name: str | None = None
+    display_name: Optional[str] = None
     """표시 이름 (전체 이름)."""
 
-    first_name: str | None = None
+    first_name: Optional[str] = None
     """이름 (given name)."""
 
-    last_name: str | None = None
+    last_name: Optional[str] = None
     """성 (family name)."""
 
-    nickname: str | None = None
+    nickname: Optional[str] = None
     """닉네임."""
 
-    profile_image_url: str | None = None
+    profile_image_url: Optional[str] = None
     """프로필 이미지 URL."""
 
-    phone_number: str | None = None
+    phone_number: Optional[str] = None
     """전화번호."""
 
-    locale: str | None = None
+    locale: Optional[str] = None
     """사용자 로케일 (예: 'ko', 'en')."""
 
     raw: dict = {}

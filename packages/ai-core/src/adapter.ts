@@ -21,6 +21,9 @@ export interface LLMAdapter {
   /** 모델 언로드 및 메모리 해제 */
   unload?(): Promise<void>;
 
+  /** 대화 컨텍스트 초기화 */
+  resetConversation?(): Promise<void>;
+
   /** 현재 모델 로딩 상태를 구독 */
   onLoadStateChange?(callback: (state: ModelLoadState) => void): () => void;
 }

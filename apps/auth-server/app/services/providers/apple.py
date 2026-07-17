@@ -8,6 +8,7 @@ Apple Sign-In (OIDC) 흐름을 구현한다.
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import logging
 import time
@@ -79,9 +80,9 @@ class AppleAdapter(SocialProviderAdapter):
     async def build_authorize_url(
         self,
         state: str,
-        nonce: str | None,
+        nonce: Optional[str],
         redirect_uri: str,
-        code_challenge: str | None = None,
+        code_challenge: Optional[str] = None,
     ) -> str:
         """Apple 인가 URL을 생성한다."""
         params: dict[str, str] = {
@@ -104,7 +105,7 @@ class AppleAdapter(SocialProviderAdapter):
         self,
         code: str,
         redirect_uri: str,
-        code_verifier: str | None = None,
+        code_verifier: Optional[str] = None,
     ) -> dict:
         """Apple 토큰 엔드포인트에서 인가 코드를 토큰으로 교환한다.
 
@@ -145,7 +146,7 @@ class AppleAdapter(SocialProviderAdapter):
 
         return resp.json()
 
-    async def fetch_profile(self, token_set: dict) -> dict | None:
+    async def fetch_profile(self, token_set: dict) -> Optional[dict]:
         """Apple 사용자 프로필을 조회한다.
 
         Apple은 별도 프로필 API가 없으므로, id_token을 디코딩하여
@@ -170,7 +171,7 @@ class AppleAdapter(SocialProviderAdapter):
     async def normalize_profile(
         self,
         token_set: dict,
-        profile: dict | None,
+        profile: Optional[dict],
     ) -> NormalizedSocialProfile:
         """Apple 프로필을 NormalizedSocialProfile로 변환한다.
 
@@ -184,9 +185,9 @@ class AppleAdapter(SocialProviderAdapter):
 
         # Apple은 사용자 이름을 최초 로그인 시 token_set의 'user' 필드로 전달할 수 있음
         user_data = token_set.get("user")
-        first_name: str | None = None
-        last_name: str | None = None
-        display_name: str | None = None
+        first_name: Optional[str] = None
+        last_name: Optional[str] = None
+        display_name: Optional[str] = None
 
         if isinstance(user_data, dict):
             name_data = user_data.get("name", {})

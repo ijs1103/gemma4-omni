@@ -4,7 +4,7 @@
 인증 API 엔드포인트에서 사용하는 스키마를 정의한다.
 """
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -50,16 +50,16 @@ class SocialCallbackRequest(BaseModel):
     code: str
     """OAuth 인가 코드."""
 
-    state: str | None = None
+    state: Optional[str] = None
     """CSRF 방지를 위한 state 값. 제공자에 따라 선택적."""
 
     redirect_uri: str
     """토큰 교환 시 사용할 리다이렉트 URI (시작 요청과 동일해야 함)."""
 
-    code_verifier: str | None = None
+    code_verifier: Optional[str] = None
     """PKCE code_verifier. 모바일 클라이언트에서 사용."""
 
-    id_token: str | None = None
+    id_token: Optional[str] = None
     """Apple 웹 로그인 시 전달되는 ID 토큰."""
 
     platform: PlatformType
@@ -99,13 +99,13 @@ class AuthUserPayload(BaseModel):
     id: str
     """사용자 고유 식별자 (UUID 문자열)."""
 
-    email: str | None = None
+    email: Optional[str] = None
     """사용자 이메일 주소."""
 
-    display_name: str | None = None
+    display_name: Optional[str] = None
     """표시 이름."""
 
-    profile_image_url: str | None = None
+    profile_image_url: Optional[str] = None
     """프로필 이미지 URL."""
 
     linked_providers: list[Provider]
@@ -126,7 +126,7 @@ class AuthSessionResponse(BaseModel):
     access_token: str
     """JWT 액세스 토큰."""
 
-    refresh_token: str | None = None
+    refresh_token: Optional[str] = None
     """리프레시 토큰. 모바일 클라이언트에만 바디로 제공."""
 
     token_type: str = "bearer"
@@ -151,7 +151,7 @@ class RefreshResponse(BaseModel):
     access_token: str
     """갱신된 JWT 액세스 토큰."""
 
-    refresh_token: str | None = None
+    refresh_token: Optional[str] = None
     """회전된 리프레시 토큰. 웹 클라이언트의 경우 쿠키로 전달."""
 
     token_type: str = "bearer"

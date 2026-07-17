@@ -7,6 +7,7 @@ SocialProviderAdapter 추상 클래스를 구현한다.
 """
 
 from __future__ import annotations
+from typing import Optional
 
 from abc import ABC, abstractmethod
 
@@ -28,9 +29,9 @@ class SocialProviderAdapter(ABC):
     async def build_authorize_url(
         self,
         state: str,
-        nonce: str | None,
+        nonce: Optional[str],
         redirect_uri: str,
-        code_challenge: str | None = None,
+        code_challenge: Optional[str] = None,
     ) -> str:
         """프로바이더의 OAuth 인가 URL을 생성한다.
 
@@ -50,7 +51,7 @@ class SocialProviderAdapter(ABC):
         self,
         code: str,
         redirect_uri: str,
-        code_verifier: str | None = None,
+        code_verifier: Optional[str] = None,
     ) -> dict:
         """인가 코드를 토큰 세트로 교환한다.
 
@@ -68,7 +69,7 @@ class SocialProviderAdapter(ABC):
         ...
 
     @abstractmethod
-    async def fetch_profile(self, token_set: dict) -> dict | None:
+    async def fetch_profile(self, token_set: dict) -> Optional[dict]:
         """프로바이더 API를 호출하여 사용자 프로필을 조회한다.
 
         OIDC 프로바이더(Google, Apple)는 id_token 디코딩으로 대체할 수 있다.
@@ -88,7 +89,7 @@ class SocialProviderAdapter(ABC):
     async def normalize_profile(
         self,
         token_set: dict,
-        profile: dict | None,
+        profile: Optional[dict],
     ) -> NormalizedSocialProfile:
         """프로바이더별 프로필 응답을 공통 NormalizedSocialProfile로 변환한다.
 

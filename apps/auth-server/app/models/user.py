@@ -5,8 +5,10 @@ provider + provider_user_id 가 실제 고유 식별자이며,
 이 모델은 여러 소셜 계정을 하나의 사용자로 통합하는 역할을 한다.
 """
 
+from typing import Optional
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc
 
 from sqlalchemy import Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -38,9 +40,9 @@ class User(Base):
         default="active",
         nullable=False,
     )
-    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    primary_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    profile_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    primary_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    profile_image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(UTC),

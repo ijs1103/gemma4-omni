@@ -10,17 +10,22 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mlc-ai/web-llm": "^0.2.83",
+    "@litert-lm/core": "^0.14.0",
     "@repo/ai-core": "workspace:*",
     "@repo/auth-shared": "workspace:*",
     "@repo/chat-state": "workspace:*",
     "@repo/prompt-kit": "workspace:*",
     "@repo/ui-tokens": "workspace:*",
     "@tailwindcss/typography": "^0.5.20",
+    "katex": "^0.17.0",
     "pdfjs-dist": "^4.0.379",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "react-toastify": "^11.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

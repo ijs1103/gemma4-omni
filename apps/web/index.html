@@ -4,7 +4,45 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>poc-web</title>
+    <title>Gemma 4 Omni</title>
+    <script>
+      // OAuth 콜백 처리 전용 초고속 인라인 스크립트
+      // React 앱이 로드되기 전에 즉시 실행되어 COOP 타임아웃 문제를 해결함
+      if (window.location.pathname === '/auth/callback') {
+        try {
+          const urlParams = new URLSearchParams(window.location.search);
+          const code = urlParams.get('code');
+          const state = urlParams.get('state');
+          const error = urlParams.get('error');
+
+          const payload = { type: 'OAUTH_CALLBACK', code, state, error };
+
+          // 1. BroadcastChannel (가장 안정적)
+          try {
+            const bc = new BroadcastChannel('oauth_channel');
+            bc.postMessage(payload);
+          } catch(e) {}
+
+          // 2. postMessage
+          if (window.opener) {
+            try { window.opener.postMessage(payload, window.location.origin); } catch(e) {}
+            try { window.opener.postMessage(payload, '*'); } catch(e) {}
+          }
+          
+          // 3. localStorage (백업)
+          try {
+            localStorage.setItem('oauth_callback_data', JSON.stringify({ ...payload, timestamp: Date.now() }));
+          } catch(e) {}
+
+          setTimeout(() => { window.close(); }, 150);
+          
+          document.write('<div style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;background:#000;color:#fff;"><h2>로그인 완료. 창을 닫는 중...</h2></div>');
+          window.stop(); // React 로딩 중단
+        } catch (err) {
+          console.error('[OAuth Fast-Path] Error:', err);
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

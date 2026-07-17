@@ -2,33 +2,62 @@
 @plugin "@tailwindcss/typography";
 
 :root {
-  /* HSL Tailored sleak dark colors */
-  --bg: #090a10;
-  --card-bg: rgba(20, 22, 34, 0.65);
-  --card-border: rgba(255, 255, 255, 0.07);
-  --text: #94a3b8;
-  --text-light: #f8fafc;
-  --text-muted: #64748b;
-  --accent: #6366f1;
-  --accent-glow: rgba(99, 102, 241, 0.15);
-  --accent-border: rgba(99, 102, 241, 0.4);
-  --success: #10b981;
-  --success-glow: rgba(16, 185, 129, 0.15);
-  --danger: #f43f5e;
-  --danger-glow: rgba(244, 63, 94, 0.15);
-  --warning: #f59e0b;
+  /* Light Theme Colors (Default) */
+  --bg: #ffffff; /* Chat background */
+  --sidebar-bg: #f8f9fa;
+  --card-bg: #f8f9fa;
+  --card-border: #e5e7eb;
   
+  --text: #202124;
+  --text-light: #000000;
+  --text-muted: #5f6368;
+  
+  --accent: #0b57d0;
+  --accent-bg: #e9eef6;
+  --accent-border: #e5e7eb;
+  
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+
+  --gemini-gradient: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #ffffff 75%, #ffffff 100%);
+  --gemini-gradient-text: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #202124 75%, #202124 100%);
+
   --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --mono: 'Fira Code', 'Courier New', Courier, monospace;
+}
 
+html.dark {
+  /* Dark Theme Colors */
+  --bg: #131314; /* Chat background */
+  --sidebar-bg: #1e1f20;
+  --card-bg: #1e1f20;
+  --card-border: #444746;
+  
+  --text: #e3e3e3;
+  --text-light: #ffffff;
+  --text-muted: #c4c7c5;
+  
+  --accent: #a8c7fa;
+  --accent-bg: #282a2c;
+  --accent-border: #444746;
+
+  --gemini-gradient: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #131314 75%, #131314 100%);
+  --gemini-gradient-text: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #e3e3e3 75%, #e3e3e3 100%);
+}
+
+body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
-  
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
 }
 
 * {
@@ -43,11 +72,6 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   background-color: var(--bg);
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(244, 63, 94, 0.03) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.02) 0px, transparent 50%);
-  background-attachment: fixed;
 }
 
 #root {
