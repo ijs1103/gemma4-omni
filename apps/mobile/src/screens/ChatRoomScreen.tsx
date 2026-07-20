@@ -815,7 +815,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         title: sessionTitle,
         status: 'active',
         modelId: 'litert-gemma-4-e4b',
-        createdAt: curCreatedAt || Date.now(),
+        createdAt: curCreatedAt || Date.now(),+
         updatedAt: Date.now(),
         messages: currentMsgs as any,
       }).then(() => loadSessions()).catch(e => console.error('[ChatRoom] 중단 저장 실패:', e));

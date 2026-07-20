@@ -66,6 +66,9 @@ export default function App() {
   // 인증 세션 상태
   const [authSession, setAuthSession] = useState<AuthSession | null>(null);
 
+  // 프로필 이미지 로드 에러 추적 (네이버 등에서 Tracking Prevention으로 차단되는 경우 대응)
+  const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
+
   // IndexedDB 대용량 벤치마크 상태 및 로그인 상태 제거됨 (미니멀 UI를 위해 제거)
   
   // Ref 관리
@@ -646,11 +649,16 @@ export default function App() {
                 >
                   {/* 아바타 원형 */}
                   <div className="sidebar-avatar" style={{ overflow: 'hidden', padding: 0 }}>
-                    {authSession?.user?.profileImageUrl ? (
+                    {authSession?.user?.profileImageUrl && !imageLoadErrors[authSession.user.profileImageUrl] ? (
                       <img 
                         src={authSession.user.profileImageUrl} 
                         alt="Profile" 
                         referrerPolicy="no-referrer"
+                        onError={() => {
+                          if (authSession?.user?.profileImageUrl) {
+                            setImageLoadErrors(prev => ({ ...prev, [authSession.user.profileImageUrl!]: true }));
+                          }
+                        }}
                         style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} 
                       />
                     ) : (
@@ -707,11 +715,16 @@ export default function App() {
                           overflow: 'hidden',
                         }}
                       >
-                        {authSession?.user?.profileImageUrl ? (
+                        {authSession?.user?.profileImageUrl && !imageLoadErrors[authSession.user.profileImageUrl] ? (
                           <img 
                             src={authSession.user.profileImageUrl} 
                             alt="Profile" 
                             referrerPolicy="no-referrer"
+                            onError={() => {
+                              if (authSession?.user?.profileImageUrl) {
+                                setImageLoadErrors(prev => ({ ...prev, [authSession.user.profileImageUrl!]: true }));
+                              }
+                            }}
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                           />
                         ) : (
