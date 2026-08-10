@@ -22,9 +22,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
-import { LiteRTLMAdapter } from '../adapters/LiteRTLMAdapter';
+import { getLiteRTAdapter } from '../adapters/LiteRTLMAdapter';
 import { MobileStorageAdapter } from '../adapters/MobileStorageAdapter';
-import type { ChatMessage, ModelLoadState, Attachment } from '@repo/ai-core';
+import type { ChatMessage, Attachment } from '@repo/ai-core';
+import { MODEL_CATALOG, ModelId, ModelDownloadState } from '../types/models';
 import Markdown from 'react-native-markdown-display';
 import { preprocessMarkdown } from '../utils/markdown';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -37,13 +38,10 @@ import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { useChat } from '../context/ChatContext';
 import { useTheme } from '@react-navigation/native';
 
-// 싱글톤 어댑터 — 네이티브 브릿지가 준비된 후 컴포넌트 초기화 시점에 생성
-// (모듈 최상위에서 즉시 생성하면 NativeModules가 undefined 상태일 수 있음)
-let _modelAdapter: LiteRTLMAdapter | null = null;
+// 싱글톤 어댑터 — 전역 어댑터 싱글톤(getLiteRTAdapter)으로 통합
 let _storage: MobileStorageAdapter | null = null;
-function getModelAdapter(): LiteRTLMAdapter {
-  if (!_modelAdapter) _modelAdapter = new LiteRTLMAdapter();
-  return _modelAdapter;
+function getModelAdapter() {
+  return getLiteRTAdapter();
 }
 function getStorage(): MobileStorageAdapter {
   if (!_storage) _storage = new MobileStorageAdapter();
@@ -151,7 +149,34 @@ function AIMessageBubble({ message }: { message: DisplayMessage }) {
 export default function ChatRoomScreen({ route, navigation }: any) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  // 기본 모델: route param 우선, 없으면 다운로드 완료된(ready) 첫 번째 모델 자동 선택
+  const getDefaultModelId = (): ModelId => {
+    if (route.params?.modelId) return route.params.modelId;
+    const adapter = getModelAdapter();
+    const readyModel = MODEL_CATALOG.find(
+      (e) => adapter.getDownloadState(e.id).status === 'ready',
+    );
+    return readyModel ? readyModel.id : MODEL_CATALOG[0].id;
+  };
+
   const initialSessionId = route.params?.sessionId;
+  const [modelId, setModelId] = useState<ModelId>(getDefaultModelId());
+
+  useEffect(() => {
+    if (route.params?.modelId) {
+      const selectedModel = route.params.modelId;
+      setModelId(selectedModel);
+      if (!route.params?.sessionId) {
+        setActiveSessionId(undefined);
+        setMessages([]);
+        setSessionCreatedAt(Date.now());
+        setCurrentChatTitle('새로운 로컬 대화');
+      }
+      navigation.setParams({ modelId: undefined });
+    }
+  }, [route.params?.modelId, route.params?.sessionId]);
+
+  const currentModelEntry = MODEL_CATALOG.find((e) => e.id === modelId) || MODEL_CATALOG[0];
   const {
     activeSessionId,
     setActiveSessionId,
@@ -166,7 +191,11 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
 
   const [inputText, setInputText] = useState('');
-  const [modelState, setModelState] = useState<ModelLoadState>({ status: 'idle' });
+  const [modelState, setModelState] = useState<ModelDownloadState>({ status: 'idle' });
+  // 현재 선택된 모델이 다운로드 완료 상태인지 확인
+  const isModelDownloaded = modelState.status === 'ready'
+    || modelState.status === 'loading'
+    || getModelAdapter().getDownloadState(modelId).status === 'ready';
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   // [전략 A 추가] 정지 버튼을 누른 뒤부터 onGenerationSettled를 받기 전까지 true.
@@ -197,11 +226,13 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   const messagesRef = useRef<DisplayMessage[]>(messages);
   const activeSessionIdRef = useRef<string | undefined>(activeSessionId);
   const sessionCreatedAtRef = useRef<number | undefined>(sessionCreatedAt);
+  const modelIdRef = useRef<ModelId>(modelId);
   // 중단 플래그: handleInterrupt에서 세팅, sendMessage 완료 시 확인 후 리셋
   const isInterruptedRef = useRef(false);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { activeSessionIdRef.current = activeSessionId; }, [activeSessionId]);
   useEffect(() => { sessionCreatedAtRef.current = sessionCreatedAt; }, [sessionCreatedAt]);
+  useEffect(() => { modelIdRef.current = modelId; }, [modelId]);
 
   // ─── [전략 A 추가] 정지 후 백그라운드 정리 상태 구독 ──────────────────────
   // onGenerationInterrupted: 네이티브가 실제로 중단을 반영한 시점 → 입력 잠금 시작
@@ -275,8 +306,8 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   };
 
   const handleHeaderModel = () => {
-    console.log('헤더 AI 모델 선택 클릭됨');
-    Alert.alert('알림', '모델 선택 기능이 트리거되었습니다.');
+    console.log('헤더 AI 모델 선택 클릭됨 -> ModelGallery 이동');
+    navigation.navigate('ModelGallery');
   };
 
   const handleHeaderNewChat = () => {
@@ -465,6 +496,9 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         try {
           const loaded = await getStorage().loadSession(initialSessionId);
           if (loaded) {
+            if (loaded.modelId && MODEL_CATALOG.some(e => e.id === loaded.modelId)) {
+              setModelId(loaded.modelId as ModelId);
+            }
             const loadedMsgs = loaded.messages as DisplayMessage[];
             setMessages(loadedMsgs);
             setSessionCreatedAt(loaded.createdAt);
@@ -481,7 +515,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
 
               (async () => {
                 try {
-                  await getModelAdapter().waitForReady();
+                  await getModelAdapter().waitForReady(modelId);
                   const responseStream = getModelAdapter().stream(contextMsgs);
                   let accumulatedText = '';
                   for await (const chunk of responseStream) {
@@ -514,7 +548,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                     id: initialSessionId,
                     title: sessionTitle,
                     status: 'active',
-                    modelId: 'litert-gemma-4-e4b',
+                    modelId: modelId,
                     createdAt: loaded.createdAt,
                     updatedAt: Date.now(),
                     messages: finalMsgs,
@@ -545,34 +579,42 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     loadSessionData();
   }, [initialSessionId]);
 
-  // ── 모델 초기화 ─────────────────────────────────────────────────────────────
+  // ── 수동 모델 로드 ─────────────────────────────────────────────────────────
+  const handleLoadModel = async () => {
+    if (modelState.status === 'loading' || modelState.status === 'downloading') return;
+    try {
+      await getModelAdapter().loadModel(modelId);
+    } catch (error) {
+      console.error('Model loading failed', error);
+      Alert.alert('오류', '모델 로드 중 오류가 발생했습니다.');
+    }
+  };
+
+  // ── 모델 상태 구독 ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const unsubscribe = getModelAdapter().onLoadStateChange((state) => {
+    const adapter = getModelAdapter();
+    const unsubscribe = adapter.onDownloadStateChange(modelId, (state) => {
       setModelState(state);
-      // 모델이 ready 상태가 되면 현재 UI state를 동기화
     });
 
-    const initModel = async () => {
-      try {
-        await getModelAdapter().init({
-          id: 'litert-gemma-4-e4b',
-          family: 'gemma',
-          variant: '4-E4B',
-        });
-      } catch (error) {
-        console.error('Model loading failed', error);
-      }
-    };
+    if (adapter.getIsLoaded(modelId)) {
+      setModelState({ status: 'ready' });
+    } else {
+      setModelState(adapter.getDownloadState(modelId));
+    }
 
-    initModel();
-
-    // Cleanup: 구독만 해제. 모델은 언로드하지 않음 (싱글톤 유지)
     return () => {
       unsubscribe();
-      // 최신 ref 값으로 현재 세션 저장
+    };
+  }, [modelId]);
+
+  // ── 화면 이탈 시 최신 세션 저장 ─────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
       const curSessionId = activeSessionIdRef.current;
       const curMessages = messagesRef.current;
       const curCreatedAt = sessionCreatedAtRef.current;
+      const curModelId = modelIdRef.current;
       if (curSessionId && curMessages.length > 0) {
         const firstUserMsg = curMessages.find((m) => m.role === 'user');
         const sessionTitle = firstUserMsg
@@ -582,13 +624,12 @@ export default function ChatRoomScreen({ route, navigation }: any) {
           id: curSessionId,
           title: sessionTitle,
           status: 'active',
-          modelId: 'litert-gemma-4-e4b',
+          modelId: curModelId,
           createdAt: curCreatedAt || Date.now(),
           updatedAt: Date.now(),
           messages: curMessages as any,
-        }).catch((e) => console.error('[ChatRoom] cleanup 저장 실패:', e));
+        }).catch((e) => console.error('[ChatRoom] unmount 저장 실패:', e));
       }
-      // ❌ getModelAdapter().unload() 호출 제거 → 모델 상태 유지
     };
   }, []);
 
@@ -656,15 +697,20 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       id: curSessionId,
       title: sessionTitleEarly,
       status: 'active',
-      modelId: 'litert-gemma-4-e4b',
+      modelId: modelId,
       createdAt: curCreatedAt || Date.now(),
       updatedAt: Date.now(),
       messages: msgsWithThinking as any,
     }).then(() => loadSessions()).catch((e) => console.error('[ChatRoom] 추론 전 저장 실패:', e));
 
     try {
-      // 3. 모델 준비 대기 후 스트리밍
-      await getModelAdapter().waitForReady();
+      // 3. 모델이 미로드 상태이면 전송 시 자동 로드 시작
+      if (!getModelAdapter().getIsLoaded(modelId)) {
+        await handleLoadModel();
+      }
+
+      // 4. 모델 준비 대기 후 스트리밍
+      await getModelAdapter().waitForReady(modelId);
       const responseStream = getModelAdapter().stream(updatedMessagesWithUser);
 
       let accumulatedText = '';
@@ -708,7 +754,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         id: curSessionId,
         title: sessionTitle,
         status: 'active',
-        modelId: 'litert-gemma-4-e4b',
+        modelId: modelId,
         createdAt: curCreatedAt || Date.now(),
         updatedAt: Date.now(),
         messages: finalMessages,
@@ -733,7 +779,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         id: curSessionId,
         title: sessionTitleEarly,
         status: 'active',
-        modelId: 'litert-gemma-4-e4b',
+        modelId: modelId,
         createdAt: curCreatedAt || Date.now(),
         updatedAt: Date.now(),
         messages: errMsgs as any,
@@ -814,8 +860,8 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         id: curSessionId,
         title: sessionTitle,
         status: 'active',
-        modelId: 'litert-gemma-4-e4b',
-        createdAt: curCreatedAt || Date.now(),+
+        modelId: modelId,
+        createdAt: curCreatedAt || Date.now(),
         updatedAt: Date.now(),
         messages: currentMsgs as any,
       }).then(() => loadSessions()).catch(e => console.error('[ChatRoom] 중단 저장 실패:', e));
@@ -830,7 +876,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         onPressModel={handleHeaderModel}
         onPressNewChat={handleHeaderNewChat}
         onPressMore={handleHeaderMore}
-        modelName="Gemma4-e4b"
+        modelName={currentModelEntry.name}
       />
 
       {/* 모델 상태 배너 (헤더 바로 아래에 배치) */}
@@ -841,19 +887,49 @@ export default function ChatRoomScreen({ route, navigation }: any) {
               styles.statusDot,
               modelState.status === 'downloading' ? styles.statusDotLoading : 
               modelState.status === 'ready' ? styles.statusDotReady : 
-              { backgroundColor: colors.border }
+              modelState.status === 'loading' ? styles.statusDotLoading :
+              { backgroundColor: '#8e8e93' }
             ]}
           />
-          <Text style={[styles.modelStatusText, { color: colors.text }]}>
+          <Text style={[styles.modelStatusText, { color: colors.text, flex: 1 }]}>
             {modelState.status === 'downloading' && `온디바이스 LLM 다운로드 중... (${(modelState as any).progress}%)`}
             {modelState.status === 'loading' && '모델 메모리 적재 중...'}
             {/* [전략 B 추가] prefill 중 정지 눌러서 아직 실제 중단이 예약된 상태 */}
             {modelState.status === 'ready' && isDeferredStop && '정지 예약됨 · 첫 응답 대기 중...'}
             {/* [전략 A 추가] 정지 후 백그라운드 정리 중임을 사용자에게 알림 */}
             {modelState.status === 'ready' && !isDeferredStop && isSettling && '이전 응답 정리 중...'}
-            {modelState.status === 'ready' && !isDeferredStop && !isSettling && 'Gemma 4 E4B (Local 추론 준비 완료)'}
-            {modelState.status === 'idle' && '대기 중...'}
+            {modelState.status === 'ready' && !isDeferredStop && !isSettling && `${currentModelEntry.name} (Local 추론 준비 완료)`}
+            {modelState.status === 'idle' && isModelDownloaded && 'AI 모델 대기 중 (수동 로드 필요)'}
+            {modelState.status === 'idle' && !isModelDownloaded && '모델이 다운로드되지 않았습니다. 모델 갤러리에서 다운로드해주세요.'}
+            {modelState.status === 'error' && '모델 로드 실패'}
           </Text>
+          {modelState.status === 'idle' && isModelDownloaded && (
+            <TouchableOpacity
+              style={styles.loadModelBtn}
+              onPress={handleLoadModel}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.loadModelBtnText}>모델 로드</Text>
+            </TouchableOpacity>
+          )}
+          {modelState.status === 'idle' && !isModelDownloaded && (
+            <TouchableOpacity
+              style={[styles.loadModelBtn, { backgroundColor: '#4F46E5' }]}
+              onPress={handleHeaderModel}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.loadModelBtnText}>다운로드</Text>
+            </TouchableOpacity>
+          )}
+          {modelState.status === 'error' && (
+            <TouchableOpacity
+              style={styles.loadModelBtn}
+              onPress={isModelDownloaded ? handleLoadModel : handleHeaderModel}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.loadModelBtnText}>{isModelDownloaded ? '재시도' : '다운로드'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
         {modelState.status === 'downloading' && (
           <View style={styles.progressBarBg}>
@@ -966,7 +1042,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                 placeholder={isSettling ? '이전 응답 정리 중입니다...' : '무엇이든 물어보세요..'}
                 placeholderTextColor="#8e9eab"
                 multiline
-                editable={modelState.status === 'ready' && !isGenerating && !isSettling}
+                editable={!isGenerating && !isSettling}
               />
 
               {isGenerating ? (
@@ -980,10 +1056,10 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                 <TouchableOpacity
                   style={[
                     styles.pillSendButton,
-                    (modelState.status !== 'ready' || isSettling) && styles.disabledSendButton,
+                    isSettling && styles.disabledSendButton,
                   ]}
                   onPress={sendMessage}
-                  disabled={modelState.status !== 'ready' || isSettling}
+                  disabled={isSettling}
                 >
                   <Text style={styles.pillSendIcon}>↑</Text>
                 </TouchableOpacity>
@@ -1127,6 +1203,18 @@ const styles = StyleSheet.create({
     color: '#5f6368',
     fontSize: 13,
     fontWeight: '600',
+  },
+  loadModelBtn: {
+    backgroundColor: '#7C6AE8',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  loadModelBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   progressBarBg: {
     height: 3,

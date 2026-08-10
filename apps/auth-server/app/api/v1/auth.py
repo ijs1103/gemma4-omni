@@ -14,6 +14,7 @@ from app.schemas.auth import (
     RefreshResponse,
     SocialCallbackRequest,
     SocialStartResponse,
+    NativeLoginRequest,
 )
 from app.services.auth.session_service import SessionService
 from app.services.auth.social_service import SocialAuthService
@@ -52,6 +53,180 @@ async def start_login(
         redirect_uri=redirect_uri,
         platform=platform,
     )
+
+
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+@router.get("/social/mobile-landing")
+async def social_mobile_landing(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    """카카오/네이버 모바일 로그인 우회를 위한 HTML 랜딩 페이지.
+    
+    인앱 브라우저를 앱의 커스텀 스킴으로 리다이렉트 시킵니다.
+    """
+    query_params = str(request.query_params)
+    target_url = f"com.mobile://oauth/callback?{query_params}" if query_params else "com.mobile://oauth/callback"
+    
+    # Android Chrome 호환용 Intent URL
+    intent_url = f"intent://oauth/callback?{query_params}#Intent;scheme=com.mobile;package=com.mobile;end;"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>로그인 완료 중...</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+        <style>
+            * {{
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }}
+            body {{
+                font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background: linear-gradient(135deg, #0f0c20 0%, #15102a 50%, #06020f 100%);
+                color: #ffffff;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                overflow: hidden;
+            }}
+            .container {{
+                background: rgba(255, 255, 255, 0.03);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 24px;
+                padding: 40px 30px;
+                width: 90%;
+                max-width: 400px;
+                text-align: center;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+                transform: translateY(0);
+                animation: float 6s ease-in-out infinite;
+            }}
+            @keyframes float {{
+                0% {{ transform: translateY(0px); }}
+                50% {{ transform: translateY(-10px); }}
+                100% {{ transform: translateY(0px); }}
+            }}
+            .logo-glow {{
+                width: 72px;
+                height: 72px;
+                background: linear-gradient(135deg, #8a2be2 0%, #4a00e0 100%);
+                border-radius: 50%;
+                margin: 0 auto 24px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 0 30px rgba(138, 43, 226, 0.5);
+                position: relative;
+            }}
+            .logo-glow::after {{
+                content: '';
+                position: absolute;
+                top: -4px; left: -4px; right: -4px; bottom: -4px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #c77dff, #e0aaff);
+                z-index: -1;
+                opacity: 0.3;
+                filter: blur(8px);
+                animation: pulse 2s infinite;
+            }}
+            @keyframes pulse {{
+                0% {{ transform: scale(1); opacity: 0.3; }}
+                50% {{ transform: scale(1.15); opacity: 0.6; }}
+                100% {{ transform: scale(1); opacity: 0.3; }}
+            }}
+            .logo-icon {{
+                font-size: 32px;
+            }}
+            h1 {{
+                font-size: 24px;
+                font-weight: 700;
+                margin-bottom: 12px;
+                background: linear-gradient(135deg, #ffffff 0%, #a2a2d0 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }}
+            p {{
+                font-size: 14px;
+                color: #a2a2d0;
+                line-height: 1.6;
+                margin-bottom: 30px;
+            }}
+            .btn {{
+                display: inline-block;
+                width: 100%;
+                padding: 16px;
+                background: linear-gradient(90deg, #7b2cbf 0%, #9d4edd 100%);
+                color: #ffffff;
+                text-decoration: none;
+                font-weight: 600;
+                border-radius: 14px;
+                box-shadow: 0 8px 20px rgba(157, 78, 221, 0.3);
+                transition: all 0.3s ease;
+                border: none;
+                cursor: pointer;
+                outline: none;
+            }}
+            .btn:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 12px 24px rgba(157, 78, 221, 0.5);
+                background: linear-gradient(90deg, #8f3bf0 0%, #b260f8 100%);
+            }}
+            .btn:active {{
+                transform: translateY(1px);
+            }}
+            .fallback-text {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #5c5c8a;
+            }}
+        </style>
+        <script>
+            function performRedirect() {{
+                const userAgent = navigator.userAgent.toLowerCase();
+                const isAndroid = userAgent.indexOf('android') > -1;
+                const isChrome = userAgent.indexOf('chrome') > -1;
+                
+                // 안드로이드 크롬의 경우 공식 인텐트 주소, 그 외엔 일반 커스텀 스킴
+                const redirectUrl = (isAndroid && isChrome) ? "{intent_url}" : "{target_url}";
+                
+                // 자동 리다이렉트 실행
+                window.location.href = redirectUrl;
+            }}
+            
+            window.onload = function() {{
+                // 0.5초 대기 후 리다이렉트 시도
+                setTimeout(performRedirect, 500);
+            }};
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="logo-glow">
+                <span class="logo-icon">✨</span>
+            </div>
+            <h1>로그인 완료 중</h1>
+            <p>안전하게 인증을 완료하고 앱으로 이동하고 있습니다. 잠시만 기다려주세요.</p>
+            <a class="btn" href="{target_url}" onclick="performRedirect();">앱으로 돌아가기</a>
+            <div class="fallback-text">
+                자동으로 이동하지 않을 경우 위의 버튼을 직접 눌러주세요.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 @router.post("/social/{provider}/callback", response_model=AuthSessionResponse)
@@ -93,6 +268,35 @@ async def auth_callback(
 
     return session_response
 
+
+@router.post("/social/{provider}/native-callback", response_model=AuthSessionResponse)
+async def native_auth_callback(
+    provider: str,
+    payload: NativeLoginRequest,
+    db: SessionDep,
+    request: Request,
+    response: Response,
+) -> AuthSessionResponse:
+    """네이티브 SDK 로그인 콜백 처리.
+
+    모바일 네이티브 SDK(카카오, 네이버 등)에서 발급받은
+    access_token으로 사용자를 인증하고 세션을 생성한다.
+    """
+    device_info = request.headers.get("User-Agent")
+    ip_address = request.client.host if request.client else None
+
+    session_response = await social_auth_service.authenticate_with_token(
+        provider=provider,
+        access_token=payload.access_token,
+        platform=payload.platform,
+        db=db,
+        device_info=device_info,
+        ip_address=ip_address,
+    )
+
+    await db.commit()
+
+    return session_response
 
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_token(

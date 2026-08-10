@@ -320,6 +320,105 @@ class SocialAuthService:
         )
 
     # ════════════════════════════════════════════════════════════
+    # 2-1. 네이티브 SDK 토큰으로 인증
+    # ════════════════════════════════════════════════════════════
+
+    async def authenticate_with_token(
+        self,
+        provider: str,
+        access_token: str,
+        platform: str,
+        db: AsyncSession,
+        device_info: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> AuthSessionResponse:
+        """네이티브 SDK에서 발급받은 access_token으로 사용자를 인증/가입하고 세션을 발급한다.
+
+        모바일 네이티브 SDK(카카오, 네이버 등)는 OAuth 인가 코드 교환을 SDK 내부에서
+        자체 처리하여 access_token을 직접 반환한다. 이 메서드는 해당 access_token으로
+        프로필을 조회하고, 기존 authenticate() 메서드와 동일한 upsert → 세션 발급
+        흐름을 수행한다.
+
+        Args:
+            provider: OAuth 프로바이더 이름 (kakao, naver 등).
+            access_token: 네이티브 SDK에서 발급받은 프로바이더 access_token.
+            platform: 클라이언트 플랫폼 (android, ios).
+            db: 비동기 DB 세션.
+            device_info: 클라이언트 기기 정보.
+            ip_address: 클라이언트 IP 주소.
+
+        Returns:
+            인증 결과를 포함한 AuthSessionResponse.
+
+        Raises:
+            OAuthProviderError: 프로바이더 프로필 조회 실패 시.
+        """
+        adapter = get_provider(provider)
+
+        # access_token으로 프로바이더 프로필 직접 조회
+        token_set = {"access_token": access_token}
+        profile = await adapter.fetch_profile(token_set)
+        normalized = await adapter.normalize_profile(token_set, profile)
+
+        # 사용자 Upsert
+        user, is_new_user = await self._upsert_user_and_social_account(
+            db=db,
+            normalized=normalized,
+            token_set=token_set,
+        )
+
+        # 내부 토큰 쌍 발급
+        access_token_jwt, refresh_token = self._token_service.issue_pair(
+            user_id=str(user.id),
+            session_id="pending",
+            provider=provider,
+        )
+
+        # 인증 세션 생성
+        auth_session = await self._session_service.create_session(
+            db=db,
+            user_id=user.id,
+            refresh_token=refresh_token,
+            provider=provider,
+            device_info=device_info,
+            ip_address=ip_address,
+        )
+
+        # 최종 access_token 재발급 (올바른 session_id 포함)
+        access_token_jwt = self._token_service.issue_pair(
+            user_id=str(user.id),
+            session_id=str(auth_session.id),
+            provider=provider,
+        )[0]
+
+        # 연동된 프로바이더 목록 조회
+        social_accounts = await self._social_repo.get_by_user_id(db, user.id)
+        linked_providers = [sa.provider for sa in social_accounts]
+
+        logger.info(
+            "네이티브 SDK 인증 완료: provider=%s user_id=%s is_new=%s session_id=%s",
+            provider,
+            user.id,
+            is_new_user,
+            auth_session.id,
+        )
+
+        return AuthSessionResponse(
+            user=AuthUserPayload(
+                id=str(user.id),
+                email=user.primary_email,
+                display_name=user.display_name,
+                profile_image_url=user.profile_image_url,
+                linked_providers=linked_providers,
+            ),
+            access_token=access_token_jwt,
+            refresh_token=refresh_token if platform != "web" else None,
+            expires_in=self._token_service.get_access_token_ttl_seconds(),
+            linked_provider=provider,
+            is_new_user=is_new_user,
+        )
+
+    # ════════════════════════════════════════════════════════════
     # 3. 추가 소셜 계정 연결 (link)
     # ════════════════════════════════════════════════════════════
 

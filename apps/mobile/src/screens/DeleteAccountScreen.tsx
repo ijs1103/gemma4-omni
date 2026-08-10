@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  SafeAreaView, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
   Dimensions,
   Alert,
   ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
-import { MobileAuthAdapter } from '../adapters/MobileAuthAdapter';
+import { authAdapter } from '../context/AuthContext';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,22 +32,20 @@ const CloseIcon = ({ color }: { color: string }) => (
 
 export default function DeleteAccountScreen() {
   const navigation = useNavigation<any>();
-
-  // 실제 연동 시 전역 상태나 Auth Context에서 이메일을 가져올 수 있습니다.
-  const userEmail = 'ajapag@gmail.com';
   const { clearAllSessions } = useChat();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // 실제 로그인된 사용자 이메일 표시
+  const userEmail = user?.email ?? '계정';
 
   const handleDelete = async () => {
     try {
       setIsDeleting(true);
-      
-      const authAdapter = new MobileAuthAdapter();
-      
+
       // 1. 백엔드에서 계정 삭제 (API 연동 및 로컬 토큰 제거)
       await authAdapter.deleteAccount();
-      
+
       // 2. 기기 로컬 DB(채팅 내역 및 세션 정보) 완벽히 초기화
       await clearAllSessions();
 

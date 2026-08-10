@@ -4,26 +4,26 @@ import {
   Text, 
   StyleSheet, 
   TouchableOpacity, 
-  FlatList, 
-  SafeAreaView 
+  FlatList,
+  Image
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawerContentComponentProps, useDrawerStatus } from '@react-navigation/drawer';
 import { useTheme } from '@react-navigation/native';
 import { Settings, MessageSquare, Pin } from 'lucide-react-native';
 import { useChat } from '../context/ChatContext';
 import SettingsModal from './SettingsModal';
+import { useAuth } from '../context/AuthContext';
 
 export default function Sidebar(props: DrawerContentComponentProps) {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { sessions, loadSessions, activeSessionId, setActiveSessionId } = useChat();
   const [isSettingsVisible, setSettingsVisible] = useState(false);
+  const { user: authUser } = useAuth();
 
-  // Mock User Info
-  const user = {
-    name: 'lj',
-    email: 'ajapag@gmail.com',
-    initial: 'l',
-  };
+  const userName = authUser?.displayName || authUser?.email?.split('@')[0] || 'User';
+  const initial = userName.charAt(0).toUpperCase();
 
   const drawerStatus = useDrawerStatus();
 
@@ -49,7 +49,7 @@ export default function Sidebar(props: DrawerContentComponentProps) {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={startNewChat} activeOpacity={0.7}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>옾피티</Text>
@@ -87,11 +87,18 @@ export default function Sidebar(props: DrawerContentComponentProps) {
           onPress={() => setSettingsVisible(true)}
           style={styles.userInfo}
         >
-          <View style={[styles.avatar, { borderColor: colors.border }]}>
-            <Text style={styles.avatarText}>{user.initial}</Text>
+          <View style={[styles.avatar, { borderColor: colors.border, overflow: 'hidden' }]}>
+            {authUser?.profileImageUrl ? (
+              <Image 
+                source={{ uri: authUser.profileImageUrl }} 
+                style={{ width: '100%', height: '100%', resizeMode: 'cover' }} 
+              />
+            ) : (
+              <Text style={styles.avatarText}>{initial}</Text>
+            )}
           </View>
           <View>
-            <Text style={[styles.userName, { color: colors.text }]}>{user.name}</Text>
+            <Text style={[styles.userName, { color: colors.text }]}>{userName}</Text>
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setSettingsVisible(true)} style={styles.settingsBtn}>
@@ -102,9 +109,8 @@ export default function Sidebar(props: DrawerContentComponentProps) {
       <SettingsModal 
         visible={isSettingsVisible} 
         onClose={() => setSettingsVisible(false)} 
-        user={user}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 

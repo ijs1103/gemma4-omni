@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
       android:name=".MainApplication"
@@ -28,6 +29,21 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
+        <!-- OAuth 및 알림 딥링크 처리 -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="com.mobile" android:host="oauth" />
+            <data android:scheme="com.mobile" android:host="modelgallery" />
+        </intent-filter>
       </activity>
+      <receiver
+        android:name=".ModelDownloadReceiver"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+        </intent-filter>
+      </receiver>
     </application>
 </manifest>

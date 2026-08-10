@@ -14,6 +14,10 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Message
+import android.app.DownloadManager
+import android.net.Uri
+import android.content.Context
+import java.io.File
 import kotlinx.coroutines.*
 
 class LiteRTModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -630,6 +634,74 @@ class LiteRTModule(private val reactContext: ReactApplicationContext) : ReactCon
                 Log.e(TAG, "❌ unloadModel FAILED: ${e.message}")
                 promise.reject("UNLOAD_ERROR", e.message)
             }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 백그라운드 다운로드 매니저 (Android 네이티브 DownloadManager 직접 제어)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    @ReactMethod
+    fun enqueueModelDownload(url: String, destPath: String, modelName: String, promise: Promise) {
+        try {
+            val destFile = File(destPath)
+            if (destFile.exists()) {
+                destFile.delete()
+            }
+
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle("$modelName 모델 다운로드")
+                .setDescription("AI 모델을 백그라운드에서 다운로드 중입니다.")
+                .setDestinationUri(Uri.fromFile(destFile))
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(false)
+
+            val dm = reactContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val downloadId = dm.enqueue(request)
+
+            // SharedPreferences에 저장 (ModelDownloadReceiver에서 사용)
+            val prefs = reactContext.getSharedPreferences("model_downloads", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString("download_$downloadId", destPath)
+                .putString("download_name_$downloadId", modelName)
+                .apply()
+
+            Log.i(TAG, "Download enqueued with ID: $downloadId for $destPath")
+            promise.resolve(downloadId.toDouble())
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enqueue download", e)
+            promise.reject("ENQUEUE_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun queryDownloadProgress(downloadId: Double, promise: Promise) {
+        try {
+            val dm = reactContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val query = DownloadManager.Query().setFilterById(downloadId.toLong())
+            val cursor = dm.query(query)
+
+            if (cursor?.moveToFirst() == true) {
+                val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+
+                val localUriIdx = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+                val localUri = if (localUriIdx != -1) cursor.getString(localUriIdx) else null
+
+                val result = Arguments.createMap()
+                result.putDouble("downloaded", downloaded.toDouble())
+                result.putDouble("total", total.toDouble())
+                result.putInt("status", status)
+                result.putString("localUri", localUri ?: "")
+                promise.resolve(result)
+            } else {
+                promise.reject("NOT_FOUND", "Download not found for ID: $downloadId")
+            }
+            cursor?.close()
+        } catch (e: Exception) {
+            promise.reject("QUERY_ERROR", e.message)
         }
     }
 }

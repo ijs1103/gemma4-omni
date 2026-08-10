@@ -6,10 +6,11 @@ import {
   Modal, 
   TouchableOpacity, 
   Switch, 
-  SafeAreaView,
   Dimensions,
-  Platform
+  Platform,
+  Image
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { 
   useSharedValue, 
   useAnimatedStyle, 
@@ -27,17 +28,13 @@ const { width } = Dimensions.get('window');
 interface SettingsModalProps {
   visible: boolean;
   onClose: () => void;
-  user: {
-    name: string;
-    email: string;
-    initial: string;
-  };
 }
 
-export default function SettingsModal({ visible, onClose, user }: SettingsModalProps) {
+export default function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const { isDarkMode, setDarkMode } = useThemeContext();
   const { colors } = useTheme();
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   
   // Reanimated 공유 값: 초기 위치는 화면 우측 바깥(width)
   const translateX = useSharedValue(width);
@@ -64,7 +61,10 @@ export default function SettingsModal({ visible, onClose, user }: SettingsModalP
     });
   };
 
-  const { logout } = useAuth();
+  const { logout, user: authUser } = useAuth();
+
+  const userName = authUser?.displayName || authUser?.email?.split('@')[0] || 'User';
+  const initial = userName.charAt(0).toUpperCase();
 
   const handleLogout = async () => {
     try {
@@ -97,6 +97,7 @@ export default function SettingsModal({ visible, onClose, user }: SettingsModalP
       visible={visible}
       animationType="none" // 기본 슬라이드(translateY) 방식을 끄고 커스텀 translateX 제어
       transparent={true}
+      statusBarTranslucent={true}
       onRequestClose={handleClose}
     >
       <View style={styles.overlay}>
@@ -109,7 +110,7 @@ export default function SettingsModal({ visible, onClose, user }: SettingsModalP
         
         {/* 전체 화면 폭(100%)과 높이(100%)를 차지하는 설정 패널 */}
         <Animated.View style={[styles.panelContainer, animatedStyle, { backgroundColor: colors.background }]}>
-          <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+          <View style={[styles.safeArea, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             <View style={[styles.header, { justifyContent: 'flex-end' }]}>
               <TouchableOpacity onPress={handleClose} style={{ padding: 4 }}>
                 <X color={colors.text} size={24} />
@@ -117,10 +118,17 @@ export default function SettingsModal({ visible, onClose, user }: SettingsModalP
             </View>
             
             <View style={styles.profileSection}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{user.initial}</Text>
+              <View style={[styles.avatar, { overflow: 'hidden' }]}>
+                {authUser?.profileImageUrl ? (
+                  <Image 
+                    source={{ uri: authUser.profileImageUrl }} 
+                    style={{ width: '100%', height: '100%', resizeMode: 'cover' }} 
+                  />
+                ) : (
+                  <Text style={styles.avatarText}>{initial}</Text>
+                )}
               </View>
-              <Text style={[styles.greetingText, { color: colors.text }]}>{user.name}님, 안녕하세요.</Text>
+              <Text style={[styles.greetingText, { color: colors.text }]}>{userName}님, 안녕하세요.</Text>
               <TouchableOpacity style={styles.manageAccountBtn} onPress={handleAccountSettings}>
                 <Text style={styles.manageAccountText}>계정관리</Text>
               </TouchableOpacity>
@@ -152,7 +160,7 @@ export default function SettingsModal({ visible, onClose, user }: SettingsModalP
             
             {/* 남는 모든 여백 공간을 하단에 공백으로 배치하기 위한 스페이서 */}
             <View style={styles.spacer} />
-          </SafeAreaView>
+          </View>
         </Animated.View>
       </View>
     </Modal>
@@ -181,7 +189,6 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    paddingTop: Platform.OS === 'ios' ? 0 : 24,
     paddingHorizontal: 20,
     backgroundColor: '#ffffff',
     justifyContent: 'flex-start', // 메뉴들을 상단에 배치

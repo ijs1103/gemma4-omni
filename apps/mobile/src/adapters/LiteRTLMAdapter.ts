@@ -24,8 +24,9 @@
  *       호출되며, 이는 지금까지 크래시 없이 안전했던 모든 케이스와 동일한 구간이다.
  */
 
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { NativeModules, DeviceEventEmitter, Platform, PermissionsAndroid, Alert, NativeEventEmitter } from 'react-native';
 import RNFS from 'react-native-fs';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {
   LLMAdapter,
   ChatMessage,
@@ -110,24 +111,29 @@ const liteRTEventEmitter = LiteRTModule
   : null;
 
 if (liteRTEventEmitter !== null) {
-  liteRTEventEmitter?.addListener('onGenerationFinished', () => { console.log('[TEST] ✅ onGenerationFinished received at', Date.now()); });
-  liteRTEventEmitter?.addListener('onGenerationSettled', () => { console.log('[TEST] ✅ onGenerationSettled received at', Date.now()); });
+  liteRTEventEmitter.addListener('onGenerationFinished', () => { console.log('[TEST] ✅ onGenerationFinished received at', Date.now()); });
+  liteRTEventEmitter.addListener('onGenerationProgress', (event: any) => { console.log('[TEST] ✅ onGenerationSettled received at', Date.now()); });
 }
 
-// ─── 모델 다운로드 URL ──────────────────────────────────────────────────────
-const MODEL_DOWNLOAD_URL =
-  'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm';
-const MODEL_FILENAME = 'gemma-4-e4b-it.litertlm';
+import { ModelId, ModelDownloadState, MODEL_CATALOG } from '../types/models';
 
 export class LiteRTLMAdapter implements LLMAdapter {
   // Platform identifier (core platform)
   platform: CorePlatform = Platform.OS as CorePlatform;
 
-  private isLoaded = false;
-  private isDownloaded = false;
-  private loadStateListeners: Set<(state: ModelLoadState) => void> = new Set();
+  private downloadStates: Map<ModelId, ModelDownloadState> = new Map();
+  private loadStateListeners: Map<ModelId, Set<(state: ModelDownloadState) => void>> = new Map();
 
+  private loadedModelId: ModelId | null = null;
+  private isLoadingModel = false; // 중복 loadModel 호출 방지 가드
+  
   // Promise that resolves when the model is ready for inference
+  // Timeout/Polling refs per ModelId
+  private downloadPollIntervals: Map<ModelId, ReturnType<typeof setInterval>> = new Map();
+  private pollProgressState: Map<ModelId, { lastTime: number; lastSize: number }> = new Map();
+  // DownloadManager가 현재 활성 다운로드 중인 모델 ID 추적
+  // 이 Set에 있는 동안에는 폴링이나 syncStartupState에서 절대 미리 finalizeDownload하지 않음
+  private activeDownloads: Set<ModelId> = new Set();
   private readyResolver?: () => void;
   private readyPromise: Promise<void> = new Promise((resolve) => {
     this.readyResolver = resolve;
@@ -144,23 +150,435 @@ export class LiteRTLMAdapter implements LLMAdapter {
   private hasReceivedFirstToken = false;
   private pendingInterrupt = false;
 
+  constructor() {
+    this.syncStartupState();
+  }
+
+  private getPublicTmpPath(filename: string): string {
+    if (Platform.OS === 'android') {
+      // 앱 전용 외부 저장소(Android/data/com.mobile/files/) 사용
+      // • DownloadManager 시스템 서비스가 백그라운드에서 이 경로에 저장 가능
+      // • 앱도 EACCES 없이 읽기/복사 가능 (Scoped Storage 제약 없음)
+      // • 일반 공용 Downloads 폴더가 아니므로 EACCES 발생 안 함
+      const baseDir = RNFS.ExternalDirectoryPath || RNFS.DocumentDirectoryPath;
+      return `${baseDir}/${filename}.tmp`;
+    }
+    return `${RNFS.DocumentDirectoryPath}/${filename}.tmp`;
+  }
+
+  private isSizeValid(size: number, expectedSize: number): boolean {
+    return size >= expectedSize * 0.999;
+  }
+
+  private async safeMoveFile(srcPath: string, destPath: string): Promise<void> {
+    if (await RNFS.exists(destPath)) {
+      await RNFS.unlink(destPath).catch(() => {});
+    }
+    let moveSucceeded = false;
+    try {
+      // 1차 시도: RNFS.moveFile (동일 파티션 내 fast atomic rename)
+      await RNFS.moveFile(srcPath, destPath);
+      moveSucceeded = true;
+    } catch (e) {
+      console.warn('[LiteRTLMAdapter] moveFile failed (cross-partition), falling back to copyFile + unlink:', e);
+      // 2차 시도: 파티션을 넘는 이동인 경우 copyFile 폴백
+      await RNFS.copyFile(srcPath, destPath);
+      moveSucceeded = true;
+    }
+    // finally가 아닌 명시적 블록에서 소스 삭제 — copyFile 예외 시 srcPath는 보존됨
+    if (moveSucceeded && await RNFS.exists(srcPath)) {
+      await RNFS.unlink(srcPath).catch(() => {});
+    }
+  }
+
+  private async syncStartupState() {
+    for (const entry of MODEL_CATALOG) {
+      this.downloadStates.set(entry.id, { status: 'idle' });
+      const destPath = `${RNFS.DocumentDirectoryPath}/${entry.filename}`;
+      const publicTmpPath = this.getPublicTmpPath(entry.filename);
+
+      // 레거시 public DownloadDirectoryPath에 남아있던 잔여 파일 무소음 청소 시도
+      if (Platform.OS === 'android') {
+        const legacyTmp = `${RNFS.DownloadDirectoryPath}/${entry.filename}.tmp`;
+        RNFS.exists(legacyTmp).then((exists) => {
+          if (exists) RNFS.unlink(legacyTmp).catch(() => {});
+        }).catch(() => {});
+      }
+      
+      try {
+        if (await RNFS.exists(destPath)) {
+          const stat = await RNFS.stat(destPath);
+          if (this.isSizeValid(Number(stat.size), entry.sizeBytes)) {
+            this._setDownloadState(entry.id, { status: 'ready' });
+            // 이미 ready 상태인 경우, 공용 폴더에 혹시 남아있을 지 모를 잔여 .tmp 파일만 정리 후 다음으로 진행
+            if (await RNFS.exists(publicTmpPath)) {
+              await RNFS.unlink(publicTmpPath).catch(() => {});
+            }
+            continue;
+          } else {
+            await RNFS.unlink(destPath).catch(() => {});
+          }
+        }
+        
+        // ready 상태가 아닐 때만 공용 폴더의 임시 파일 체크 및 이동 시도
+        if (this.getDownloadState(entry.id).status !== 'ready' && await RNFS.exists(publicTmpPath)) {
+          const stat = await RNFS.stat(publicTmpPath);
+          const size = Number(stat.size) || 0;
+          
+          if (this.isSizeValid(size, entry.sizeBytes)) {
+            if (this.activeDownloads.has(entry.id)) {
+              // DownloadManager가 아직 활성 중 → 완료는 .then()에서 처리하므로 아무것도 하지 않음
+              // (폴링 없음: DownloadManager stat은 pre-allocation으로 신뢰 불가)
+            } else {
+              // 앱 재시작 시: .done 마카 파일이 있어야만 진짜 완성 파일
+              const donePath = `${publicTmpPath}.done`;
+              if (await RNFS.exists(donePath)) {
+                // .done 마카 존재 → DownloadManager가 실제 완료한 파일 → 새안드박스로 이동
+                try {
+                  await this.safeMoveFile(publicTmpPath, destPath);
+                  this._setDownloadState(entry.id, { status: 'ready' });
+                  await RNFS.unlink(donePath).catch(() => {});
+                } catch (err: any) {
+                  await RNFS.unlink(destPath).catch(() => {});
+                  this._setDownloadState(entry.id, {
+                    status: 'error',
+                    message: `모델 파일 이동 실패: ${err?.message ?? '알 수 없는 오류'}`,
+                  });
+                }
+              } else {
+                // .done 마카 없음 → DownloadManager 사전 할당(pre-allocation)된 빈 파일 → 삭제
+                console.log(`[LiteRTLMAdapter] syncStartupState: pre-allocated or interrupted file, deleting: ${publicTmpPath}`);
+                await RNFS.unlink(publicTmpPath).catch(() => {});
+              }
+            }
+          }
+          // 크기 미상 또는 활성 다운로드 아님: 삭제 (pre-allocation 파일 오염 방지)
+          if (!this.isSizeValid(size, entry.sizeBytes) && size > 0 && !this.activeDownloads.has(entry.id)) {
+            await RNFS.unlink(publicTmpPath).catch(() => {});
+          }
+        }
+      } catch (e) {
+        // Ignored
+      }
+    }
+  }
+
+  private startDownloadPolling(id: ModelId, expectedSize: number, tmpPath: string, destPath: string) {
+    // 동일 modelId에 대해 이미 폴링이 진행 중이면 중복 실행 방지
+    if (this.downloadPollIntervals.has(id)) {
+      return;
+    }
+
+    this.pollProgressState.set(id, {
+      lastTime: Date.now(),
+      lastSize: 0,
+    });
+
+    const interval = setInterval(async () => {
+      try {
+        if (!(await RNFS.exists(tmpPath))) return;
+        const stat = await RNFS.stat(tmpPath);
+        const size = Number(stat.size) || 0;
+
+        const progressState = this.pollProgressState.get(id);
+        const now = Date.now();
+
+        if (progressState) {
+          if (size > progressState.lastSize) {
+            progressState.lastSize = size;
+            progressState.lastTime = now;
+          } else if (now - progressState.lastTime > 10 * 60 * 1000) {
+            // 10분 이상 진전이 없으면 타임아웃
+            this.stopDownloadPolling(id);
+            Alert.alert(
+              '다운로드 지연',
+              '모델 다운로드가 오랫동안 멈춰있습니다. 다시 시도하시겠습니까?',
+              [
+                { text: '취소', style: 'cancel' },
+                {
+                  text: '재시도',
+                  onPress: async () => {
+                    if (await RNFS.exists(tmpPath)) {
+                      await RNFS.unlink(tmpPath).catch(() => {});
+                    }
+                    this.downloadModel(id);
+                  },
+                },
+              ]
+            );
+            this._setDownloadState(id, { status: 'error', message: '다운로드 시간 초과' });
+            return;
+          }
+        }
+
+        const pct = expectedSize > 0 ? Math.min(99, Math.round((size / expectedSize) * 100)) : 0;
+        this._setDownloadState(id, { status: 'downloading', progress: pct });
+      } catch (e) {
+        // Ignore stats error during active download
+      }
+    }, 2000);
+
+    this.downloadPollIntervals.set(id, interval);
+  }
+
+  private stopDownloadPolling(id?: ModelId) {
+    if (id) {
+      const interval = this.downloadPollIntervals.get(id);
+      if (interval) {
+        clearInterval(interval);
+        this.downloadPollIntervals.delete(id);
+        this.pollProgressState.delete(id);
+      }
+    } else {
+      this.downloadPollIntervals.forEach((interval) => clearInterval(interval));
+      this.downloadPollIntervals.clear();
+      this.pollProgressState.clear();
+    }
+  }
+
+  private async finalizeDownload(id: ModelId, tmpPath: string, destPath: string) {
+    const currentState = this.downloadStates.get(id);
+    if (currentState?.status === 'ready') return; // 이미 완료됨(락)
+
+    const entry = MODEL_CATALOG.find(e => e.id === id);
+    if (!entry) return;
+
+    // 이동 전 tmpPath 파일 무결성 검증 (사이즈 체크)
+    const tmpExists = await RNFS.exists(tmpPath);
+    if (!tmpExists) {
+      console.error(`[LiteRTLMAdapter] finalizeDownload: tmpPath 없음 for ${id}: ${tmpPath}`);
+      this._setDownloadState(id, { status: 'idle' });
+      return;
+    }
+    const tmpStat = await RNFS.stat(tmpPath);
+    const tmpSize = Number(tmpStat.size);
+    if (!this.isSizeValid(tmpSize, entry.sizeBytes)) {
+      console.error(`[LiteRTLMAdapter] finalizeDownload: 파일 크기 불일치 for ${id}: ${tmpSize} / ${entry.sizeBytes}`);
+      await RNFS.unlink(tmpPath).catch(() => {});
+      this._setDownloadState(id, { status: 'idle' });
+      return;
+    }
+
+    this._setDownloadState(id, { status: 'loading' }); // 이동 중 상태 잠금
+
+    try {
+      await this.safeMoveFile(tmpPath, destPath);
+
+      // 이동 후 destPath 파일 무결성 재검증
+      if (await RNFS.exists(destPath)) {
+        const destStat = await RNFS.stat(destPath);
+        const destSize = Number(destStat.size);
+        if (!this.isSizeValid(destSize, entry.sizeBytes)) {
+          throw new Error(`이동 후 파일 크기 불일치: ${destSize} / ${entry.sizeBytes}`);
+        }
+      } else {
+        throw new Error('이동 후 destPath 파일 없음');
+      }
+
+      this._setDownloadState(id, { status: 'ready' });
+      // 다운로드 완료 알림
+      Alert.alert(
+        '다운로드 완료',
+        `${entry.name} 모델 다운로드가 완료되었습니다. 지금 바로 사용할 수 있습니다!`,
+        [{ text: '확인' }]
+      );
+      // Android: .done 마카 파일 정리 (syncStartupState 완료 확인용)
+      const donePath = `${tmpPath}.done`;
+      await RNFS.unlink(donePath).catch(() => {});
+    } catch (err: any) {
+      console.error(`[LiteRTLMAdapter] finalizeDownload 실패 for ${id}:`, err?.message ?? err);
+      await RNFS.unlink(destPath).catch(() => {});
+      this._setDownloadState(id, {
+        status: 'idle',
+      });
+    }
+  }
+
+  private _setDownloadState(id: ModelId, state: ModelDownloadState) {
+    this.downloadStates.set(id, state);
+    const listeners = this.loadStateListeners.get(id);
+    if (listeners) {
+      listeners.forEach((fn) => fn(state));
+    }
+  }
+
+  public getIsLoaded(id?: ModelId): boolean {
+    if (id) return this.loadedModelId === id;
+    return this.loadedModelId !== null;
+  }
+
   /**
    * Wait until the native model is loaded and ready.
    * Resolves immediately if already loaded.
    */
-  public async waitForReady(): Promise<void> {
-    if (this.isLoaded) return;
+  public async waitForReady(id?: ModelId): Promise<void> {
+    if (id && this.loadedModelId === id) return;
+    if (!id && this.loadedModelId !== null) return;
     await this.readyPromise;
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // init: 모델 다운로드 → 네이티브 로드
+  // 신규 갤러리 지원 API
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  public getDownloadState(id: ModelId): ModelDownloadState {
+    return this.downloadStates.get(id) || { status: 'idle' };
+  }
 
-  async init(model: ModelSpec): Promise<void> {
-    if (this.isLoaded) {
-      this.notifyLoadState({ status: 'ready' });
-      // Resolve the ready promise if waiting
+  public onDownloadStateChange(id: ModelId, callback: (state: ModelDownloadState) => void): () => void {
+    if (!this.loadStateListeners.has(id)) {
+      this.loadStateListeners.set(id, new Set());
+    }
+    this.loadStateListeners.get(id)!.add(callback);
+    return () => {
+      this.loadStateListeners.get(id)?.delete(callback);
+    };
+  }
+
+  public async checkFreeSpace(requiredBytes: number): Promise<boolean> {
+    try {
+      const fsInfo = await RNFS.getFSInfo();
+      // moveFile이 다른 파일시스템 간 copy+delete로 동작하는 경우를 대비해 1.2배 여유 확인.
+      // (같은 파일시스템 내에서는 atomic rename이라 추가 공간 불필요)
+      return fsInfo.freeSpace > requiredBytes * 1.2;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  public async downloadModel(id: ModelId): Promise<void> {
+    const entry = MODEL_CATALOG.find(e => e.id === id);
+    if (!entry) return;
+
+    // Android 13 이상 알림 권한 체크
+    if (Platform.OS === 'android' && Platform.Version >= 33) {
+      try {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      } catch (e) {
+        // 무시
+      }
+    }
+
+    const destPath = `${RNFS.DocumentDirectoryPath}/${entry.filename}`;
+    const publicTmpPath = this.getPublicTmpPath(entry.filename);
+
+    try {
+      // 용량 체크
+      if (!(await this.checkFreeSpace(entry.sizeBytes))) {
+        Alert.alert('용량 부족', '모델 다운로드에 필요한 여유 공간(2배 이상)이 부족합니다.');
+        return;
+      }
+
+      if (await RNFS.exists(destPath)) {
+        const stat = await RNFS.stat(destPath);
+        if (this.isSizeValid(Number(stat.size), entry.sizeBytes)) {
+          this._setDownloadState(id, { status: 'ready' });
+          return;
+        }
+        await RNFS.unlink(destPath).catch(() => {});
+      }
+
+      // 새 다운로드 시작 시 안전하게 앱 전용 저장소 내의 잔여 .tmp 및 마커 파일 정리
+      const possibleTmpPaths = [
+        publicTmpPath,
+        `${publicTmpPath}.done`,
+        `${publicTmpPath.replace('.tmp', '')}-1.tmp`,
+        `${publicTmpPath.replace('.tmp', '')}-2.tmp`,
+        `${RNFS.DocumentDirectoryPath}/${entry.filename}.tmp`,
+        `${RNFS.ExternalDirectoryPath}/${entry.filename}.tmp`,
+      ].filter((p, i, arr) => p && arr.indexOf(p) === i);
+
+      for (const p of possibleTmpPaths) {
+        try {
+          if (await RNFS.exists(p)) {
+            await RNFS.unlink(p).catch(() => {});
+          }
+        } catch (e) {
+          // 개별 파일 삭제 실패 시 무시하고 다음 진행
+        }
+      }
+
+      this._setDownloadState(id, { status: 'downloading', progress: 0 });
+      this.activeDownloads.add(id);
+
+      if (Platform.OS === 'android') {
+        try {
+          const downloadId = await NativeModules.LiteRT.enqueueModelDownload(
+            entry.url,
+            publicTmpPath,
+            entry.name
+          );
+
+          const pollInterval = setInterval(async () => {
+            try {
+              const info = await NativeModules.LiteRT.queryDownloadProgress(downloadId);
+              if (info && info.total > 0) {
+                const pct = Math.min(99, Math.round((info.downloaded / info.total) * 100));
+                this._setDownloadState(id, { status: 'downloading', progress: pct });
+              }
+
+              if (info?.status === 8) {
+                // DownloadManager STATUS_SUCCESSFUL (8)
+                clearInterval(pollInterval);
+                this.activeDownloads.delete(id);
+                const donePath = `${publicTmpPath}.done`;
+                await RNFS.writeFile(donePath, 'ok', 'utf8').catch(() => {});
+                
+                let actualPath = publicTmpPath;
+                if (info.localUri) {
+                  actualPath = info.localUri.replace('file://', '');
+                }
+                await this.finalizeDownload(id, actualPath, destPath);
+              } else if (info?.status === 16) {
+                // DownloadManager STATUS_FAILED (16)
+                clearInterval(pollInterval);
+                this.activeDownloads.delete(id);
+                this._setDownloadState(id, { status: 'error', message: '백그라운드 다운로드 실패' });
+              }
+            } catch (e) {
+              // 마커 확인 등 후속 완료 처리 고려하여, donePath가 있으면 완료 수용
+              const donePath = `${publicTmpPath}.done`;
+              if (await RNFS.exists(donePath)) {
+                clearInterval(pollInterval);
+                this.activeDownloads.delete(id);
+                await this.finalizeDownload(id, publicTmpPath, destPath);
+              }
+            }
+          }, 1500);
+        } catch (err: any) {
+          console.error('[LiteRTLMAdapter] Android enqueueModelDownload error:', err);
+          this.activeDownloads.delete(id);
+          this._setDownloadState(id, { status: 'error', message: `다운로드 시작 실패: ${err?.message ?? '알 수 없는 오류'}` });
+        }
+      } else {
+        // iOS: react-native-blob-util background session 사용
+        ReactNativeBlobUtil.config({
+          fileCache: true,
+          path: publicTmpPath,
+          background: true,
+        } as any)
+        .fetch('GET', entry.url)
+        .progress((received, total) => {
+          const pct = Number(total) > 0 ? Math.round((Number(received) / Number(total)) * 100) : 0;
+          this._setDownloadState(id, { status: 'downloading', progress: Math.min(99, pct) });
+        })
+        .then(async (res) => {
+          this.activeDownloads.delete(id);
+          await this.finalizeDownload(id, publicTmpPath, destPath);
+        })
+        .catch((err) => {
+          this.activeDownloads.delete(id);
+          this._setDownloadState(id, { status: 'error', message: '네트워크 에러로 다운로드가 중단되었습니다.' });
+        });
+      }
+    } catch (error: any) {
+      this.stopDownloadPolling(id);
+      this._setDownloadState(id, { status: 'error', message: '다운로드 시작 실패' });
+    }
+  }
+
+  public async loadModel(id: ModelId): Promise<void> {
+    if (this.loadedModelId === id) {
       if (this.readyResolver) {
         this.readyResolver();
         this.readyResolver = undefined;
@@ -168,72 +586,79 @@ export class LiteRTLMAdapter implements LLMAdapter {
       return;
     }
 
-    // ── Phase 1: 모델 파일 다운로드 ──
-    if (!this.isDownloaded) {
-      this.notifyLoadState({ status: 'downloading', progress: 0 });
-
-      const destPath = `${RNFS.DocumentDirectoryPath}/${MODEL_FILENAME}`;
-
-      try {
-        const exists = await RNFS.exists(destPath);
-        if (!exists) {
-          console.log('[LiteRTLMAdapter] Starting model download to', destPath);
-          const downloadResult = RNFS.downloadFile({
-            fromUrl: MODEL_DOWNLOAD_URL,
-            toFile: destPath,
-            progressInterval: 500,
-            progress: (res) => {
-              const progress =
-                res.contentLength > 0
-                  ? Math.round((res.bytesWritten / res.contentLength) * 100)
-                  : 0;
-              this.notifyLoadState({ status: 'downloading', progress });
-            },
-          });
-
-          const result = await downloadResult.promise;
-          if (result.statusCode !== 200) {
-            throw new Error(
-              `Download failed with status ${result.statusCode}`,
-            );
-          }
-        }
-        this.isDownloaded = true;
-      } catch (e) {
-        console.error('[LiteRTLMAdapter] Download error:', e);
-        this.notifyLoadState({
-          status: 'error',
-          message: 'Failed to download model file.',
-        });
-        return;
-      }
+    if (this.isLoadingModel) {
+      console.log('[LiteRTLMAdapter] loadModel already in progress, waiting...');
+      await this.readyPromise;
+      return;
     }
 
-    // ── Phase 2: 네이티브 모듈로 모델 로드 ──
-    this.notifyLoadState({ status: 'loading', progress: 100 });
+    const entry = MODEL_CATALOG.find(e => e.id === id);
+    if (!entry) throw new Error('Unknown model ID');
+
+    this.isLoadingModel = true;
+
+    // Reset readyPromise for new model load
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolver = resolve;
+    });
+
+    // Rule R-03: Swap safety
+    if (this.loadedModelId !== null && this.loadedModelId !== id) {
+      console.log(`[LiteRTLMAdapter] Unloading previous model: ${this.loadedModelId}`);
+      if (LiteRTModule) {
+        await LiteRTModule.unloadModel();
+      }
+      this.loadedModelId = null;
+      // 네이티브 C++ 엔진이 메모리를 완전히 해제할 시간 확보
+      await new Promise<void>(resolve => setTimeout(resolve, 300));
+    }
+
+    this._setDownloadState(id, { status: 'loading' });
 
     try {
-      const destPath = `${RNFS.DocumentDirectoryPath}/${MODEL_FILENAME}`;
+      const destPath = `${RNFS.DocumentDirectoryPath}/${entry.filename}`;
+
+      // loadModel 전 파일 무결성 최종 검증
+      if (!(await RNFS.exists(destPath))) {
+        throw new Error(`모델 파일이 존재하지 않습니다: ${destPath}`);
+      }
+      const fileStat = await RNFS.stat(destPath);
+      if (!this.isSizeValid(Number(fileStat.size), entry.sizeBytes)) {
+        console.error(`[LiteRTLMAdapter] 파일 크기 불일치, 삭제 후 재다운로드 유도: ${fileStat.size} / ${entry.sizeBytes}`);
+        await RNFS.unlink(destPath).catch(() => {});
+        this.isLoadingModel = false;
+        this._setDownloadState(id, { status: 'idle' });
+        throw new Error('모델 파일이 손상되었습니다. 다시 다운로드해주세요.');
+      }
 
       if (LiteRTModule) {
         await LiteRTModule.loadModel(destPath);
       } else {
-        console.warn(
-          '[LiteRTLMAdapter] LiteRTModule is not linked. Skipping loadModel.',
-        );
+        console.warn('[LiteRTLMAdapter] LiteRTModule is not linked. Skipping native load.');
       }
 
-      this.isLoaded = true;
-      this.notifyLoadState({ status: 'ready' });
-      // Resolve any pending waitForReady callers
+      this.loadedModelId = id;
+      this.isLoadingModel = false;
+      this._setDownloadState(id, { status: 'ready' });
+
+      // Resolve pending callers
       if (this.readyResolver) {
         this.readyResolver();
         this.readyResolver = undefined;
       }
     } catch (error) {
-      console.error('[LiteRTLMAdapter] Failed to load native model:', error);
-      this.notifyLoadState({ status: 'error', message: 'Failed to load model' });
+      console.error(`[LiteRTLMAdapter] Failed to load native model ${id}:`, error);
+      this.isLoadingModel = false;
+      this._setDownloadState(id, { status: 'error', message: 'Failed to load model' });
     }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // init: 구 버전 하위 호환
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  async init(model: ModelSpec): Promise<void> {
+    await this.loadModel(model.id as ModelId);
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -241,8 +666,9 @@ export class LiteRTLMAdapter implements LLMAdapter {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   async warmup(): Promise<void> {
-    if (!this.isLoaded) throw new Error('Model not loaded');
+    if (this.loadedModelId === null) throw new Error('Model not loaded');
   }
+
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // generate: 전체 응답을 한 번에 반환 (stream을 내부적으로 소비)
@@ -276,7 +702,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
     options?: GenerateOptions,
   ): AsyncIterable<StreamChunk> {
     // Ensure the model is loaded before streaming
-    if (!this.isLoaded) {
+    if (this.loadedModelId === null) {
       // Wait for the model to become ready (e.g., after init completes)
       await this.readyPromise;
     }
@@ -329,7 +755,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
 
     const tokenListener = liteRTEventEmitter?.addListener(
       'onTokenGenerated',
-      (event) => {
+      (event: any) => {
         // [전략 B 추가] 이번 스트림에서 처음 도착한 토큰인지 확인.
         // 첫 토큰 = "네이티브가 확실히 prefill을 끝내고 decode 단계에 들어갔다"는 증거.
         // 이 시점부터는 interruptGeneration() 호출이 안전하다.
@@ -376,7 +802,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
 
     const errorListener = liteRTEventEmitter?.addListener(
       'onGenerationError',
-      (event) => {
+      (event: any) => {
         console.error(
           '[LiteRTLMAdapter] Native generation error event:',
           event.error,
@@ -530,27 +956,18 @@ public get wasInterruptDeferred(): boolean {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   async unload(): Promise<void> {
-    if (this.isLoaded) {
+    if (this.loadedModelId !== null) {
       if (LiteRTModule) {
         await LiteRTModule.unloadModel();
       }
-      this.isLoaded = false;
+      this._setDownloadState(this.loadedModelId, { status: 'idle' });
+      this.loadedModelId = null;
     }
-    this.notifyLoadState({ status: 'idle' });
   }
+}
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 로드 상태 옵저버
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  onLoadStateChange(callback: (state: ModelLoadState) => void): () => void {
-    this.loadStateListeners.add(callback);
-    return () => {
-      this.loadStateListeners.delete(callback);
-    };
-  }
-
-  private notifyLoadState(state: ModelLoadState) {
-    this.loadStateListeners.forEach((listener) => listener(state));
-  }
+let _liteRTAdapterInstance: LiteRTLMAdapter | null = null;
+export function getLiteRTAdapter(): LiteRTLMAdapter {
+  if (!_liteRTAdapterInstance) _liteRTAdapterInstance = new LiteRTLMAdapter();
+  return _liteRTAdapterInstance;
 }

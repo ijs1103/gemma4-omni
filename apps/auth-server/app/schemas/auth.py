@@ -66,6 +66,22 @@ class SocialCallbackRequest(BaseModel):
     """클라이언트 플랫폼 (web / ios / android)."""
 
 
+class NativeLoginRequest(BaseModel):
+    """네이티브 SDK 로그인 요청.
+
+    모바일 네이티브 SDK(카카오, 네이버 등)로 로그인한 후
+    발급받은 access_token을 직접 전달하여 세션을 생성한다.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    access_token: str
+    """네이티브 SDK에서 발급받은 프로바이더 access_token."""
+
+    platform: PlatformType
+    """클라이언트 플랫폼 (web / ios / android)."""
+
+
 class RefreshRequest(BaseModel):
     """액세스 토큰 갱신 요청.
 
