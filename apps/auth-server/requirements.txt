@@ -3,7 +3,6 @@ alembic==1.18.4
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.13.0
--e git+https://github.com/ijs1103/gemma4-omni.git@145530346afa3d3f779e1a2de9d87d42e41ff378#egg=auth_server
 bcrypt==5.0.0
 certifi==2026.5.20
 cffi==2.0.0

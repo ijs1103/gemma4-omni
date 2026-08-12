@@ -128,15 +128,28 @@ class SessionService:
         existing_session = await self._session_repo.get_by_refresh_hash(db, old_hash)
 
         if existing_session is None:
-            # 이미 폐기된 토큰일 수 있음 → 토큰 탈취 대응: 해당 해시의 모든 세션 폐기
+            # 이미 폐기된 토큰인지 확인 → 토큰 탈취 대응: 해당 유저의 모든 세션 폐기
+            revoked_session = await self._session_repo.get_any_by_refresh_hash(db, old_hash)
+            if revoked_session:
+                await self.revoke_all_sessions(db, revoked_session.user_id)
+                logger.critical(
+                    "보안 위반 감지: 폐기된 refresh token 사용 (user_id=%s). 해당 사용자의 모든 세션을 무효화했습니다.",
+                    revoked_session.user_id,
+                )
+                raise SessionRevokedError("보안 위반: 이미 사용된 토큰입니다. 모든 세션이 종료되었습니다.")
+            
             logger.warning(
-                "폐기된 또는 존재하지 않는 refresh token 사용 감지: hash=%s...",
+                "존재하지 않는 refresh token 사용 감지: hash=%s...",
                 old_hash[:16],
             )
             raise InvalidTokenError("유효하지 않은 리프레시 토큰입니다.")
 
         # 2. 만료 확인
-        if existing_session.expires_at < datetime.now(UTC):
+        expires_at = existing_session.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        if expires_at < datetime.now(UTC):
             logger.info("만료된 세션 접근: session_id=%s", existing_session.id)
             await self._session_repo.revoke(db, existing_session.id)
             raise InvalidTokenError("리프레시 토큰이 만료되었습니다.")

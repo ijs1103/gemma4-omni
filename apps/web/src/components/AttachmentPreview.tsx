@@ -6,7 +6,7 @@ interface AttachmentPreviewProps {
   onRemove: (id: string) => void;
 }
 
-export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({ attachments, onRemove }) => {
+export const AttachmentPreview: React.FC<AttachmentPreviewProps> = React.memo(({ attachments, onRemove }) => {
   console.log('[AttachmentPreview] rendering attachments:', attachments);
   if (attachments.length === 0) return null;
 
@@ -48,4 +48,4 @@ export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({ attachment
       </div>
     </div>
   );
-};
+});

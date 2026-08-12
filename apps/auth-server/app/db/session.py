@@ -16,11 +16,21 @@ _is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
 _connect_args: dict = {"check_same_thread": False} if _is_sqlite else {}
 
+_engine_kwargs: dict = {
+    "pool_pre_ping": True,
+    "echo": False,
+    "connect_args": _connect_args,
+}
+
+if not _is_sqlite:
+    _engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+    })
+
 engine = create_async_engine(
     settings.DATABASE_URL,
-    pool_pre_ping=True,
-    echo=False,
-    connect_args=_connect_args,
+    **_engine_kwargs,
 )
 
 async_session_factory = async_sessionmaker(

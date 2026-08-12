@@ -10,7 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawerContentComponentProps, useDrawerStatus } from '@react-navigation/drawer';
 import { useTheme } from '@react-navigation/native';
-import { Settings, MessageSquare, Pin } from 'lucide-react-native';
+import { Settings, MessageSquare, Pin, X } from 'lucide-react-native';
 import { useChat } from '../context/ChatContext';
 import SettingsModal from './SettingsModal';
 import { useAuth } from '../context/AuthContext';
@@ -53,6 +53,14 @@ export default function Sidebar(props: DrawerContentComponentProps) {
       <View style={styles.header}>
         <TouchableOpacity onPress={startNewChat} activeOpacity={0.7}>
           <Text style={[styles.headerTitle, { color: colors.text }]}>옾피티</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          onPress={() => props.navigation.closeDrawer()} 
+          activeOpacity={0.7}
+          style={styles.closeBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <X size={24} color={colors.text} />
         </TouchableOpacity>
       </View>
       
@@ -120,9 +128,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8f9fa',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 24,
     paddingBottom: 16,
+  },
+  closeBtn: {
+    padding: 4,
   },
   headerTitle: {
     fontSize: 22,

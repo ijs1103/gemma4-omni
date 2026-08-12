@@ -20,6 +20,8 @@ import { WebAuthAdapter } from './adapters/WebAuthAdapter';
 import { ChatBubble } from './components/ChatBubble';
 import { AttachmentPreview } from './components/AttachmentPreview';
 import { SocialLogin } from './components/SocialLogin';
+import { ModelLoadingOverlay } from './components/ModelLoadingOverlay';
+import { ModelGalleryModal } from './components/ModelGalleryModal';
 import { useTheme } from './context/ThemeContext';
 import { useFileAttachment } from './hooks/useFileAttachment';
 
@@ -75,12 +77,20 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // 사이드바 토글 상태
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  // 사이드바 토글 상태 (모바일 브라우저에서는 기본 비활성화 false, PC에서는 활성화 true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 768;
+    }
+    return true;
+  });
 
   // 설정 모달 상태
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'theme' | 'notifications'>('general');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'theme' | 'terms'>('general');
+
+  // AI 모델 갤러리 모달 상태
+  const [isModelGalleryOpen, setIsModelGalleryOpen] = useState(false);
 
   // 소셜 로그인 화면 상태
   const [isLoginScreenOpen, setIsLoginScreenOpen] = useState(false);
@@ -131,6 +141,25 @@ export default function App() {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isAccountMenuOpen]);
+
+  // 모바일 사이드바 드로어 오픈 시 본문 스크롤 방지 (overflow-hidden)
+  useEffect(() => {
+    const handleScrollLock = () => {
+      if (isSidebarOpen && window.innerWidth < 768) {
+        document.body.classList.add('overflow-hidden');
+      } else {
+        document.body.classList.remove('overflow-hidden');
+      }
+    };
+
+    handleScrollLock();
+    window.addEventListener('resize', handleScrollLock);
+
+    return () => {
+      document.body.classList.remove('overflow-hidden');
+      window.removeEventListener('resize', handleScrollLock);
+    };
+  }, [isSidebarOpen]);
 
   // textarea 높이 조절
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -209,15 +238,13 @@ export default function App() {
 
     const targetModelId = overrideModelId || selectedModelId;
     const actualModelId = MODEL_REGISTRY[targetModelId] ? targetModelId : initialModelId;
-    if (selectedModelId !== actualModelId) {
-      setSelectedModelId(actualModelId);
-    }
+    setSelectedModelId(actualModelId);
 
-    const spec: ModelSpec = {
+    const spec: ModelSpec = MODEL_REGISTRY[actualModelId]?.spec || {
       id: actualModelId,
       family: 'gemma',
-      variant: '2b',
-      contextWindow: 8192
+      variant: '4-e4b',
+      contextWindow: 32768
     };
 
     try {
@@ -225,6 +252,8 @@ export default function App() {
       const loadedModelName = MODEL_REGISTRY[actualModelId]?.label || actualModelId;
       console.log(`[LiteRTLMAdapter] ${loadedModelName}가 로드 완료되었습니다.`);
       setLoadedModelId(actualModelId);
+      setSelectedModelId(actualModelId);
+      setChatPhase('idle');
       toast.dismiss('model-load');
       toast.success('AI 모델이 성공적으로 로드되었습니다.', { toastId: 'model-load' });
       await handleNewSession(true);
@@ -234,6 +263,17 @@ export default function App() {
       toast.dismiss('model-load');
       toast.error('모델 로딩 중 오류가 발생했습니다.', { toastId: 'model-load' });
     }
+  };
+
+  // 3-1. 모델 로드 취소
+  const handleCancelLoadModel = async () => {
+    try {
+      await llmAdapter.unload();
+    } catch (e) {}
+    setChatPhase('idle');
+    setLoadedModelId(null);
+    toast.dismiss('model-load');
+    toast.info('모델 로딩이 취소되었습니다.');
   };
 
 
@@ -363,6 +403,19 @@ export default function App() {
         signal: abortControllerRef.current.signal
       });
 
+      let lastRenderTime = 0;
+      let rafId: number | null = null;
+
+      const flushUpdate = () => {
+        setCurrentSession(prev => {
+          if (!prev) return null;
+          const nextMsgs = prev.messages.map(m => 
+            m.id === assistantMsgId ? { ...m, content: fullResponse } : m
+          );
+          return { ...prev, messages: nextMsgs };
+        });
+      };
+
       for await (const chunk of chunks) {
         if (chunk.type === 'text-delta') {
           if (firstTokenTime === null) {
@@ -375,14 +428,13 @@ export default function App() {
 
           fullResponse += chunk.text;
           
-          setCurrentSession(prev => {
-            if (!prev) return null;
-            const nextMsgs = prev.messages.map(m => 
-              m.id === assistantMsgId ? { ...m, content: fullResponse } : m
-            );
-            return { ...prev, messages: nextMsgs };
-          });
+          const now = performance.now();
+          if (now - lastRenderTime > 32) { // Max ~30fps batch update during rapid streaming
+            lastRenderTime = now;
+            flushUpdate();
+          }
         } else if (chunk.type === 'done' && chunk.stats) {
+          flushUpdate();
           setGenerationStats(prev => ({
             ...prev,
             totalMs: Math.round(chunk.stats?.totalMs || 0),
@@ -393,6 +445,7 @@ export default function App() {
           throw new Error(chunk.message);
         }
       }
+      flushUpdate();
 
       let finalTitle = workingSession.title;
       if (finalTitle === '새로운 대화' && promptText) {
@@ -474,8 +527,16 @@ export default function App() {
     return authSession?.user?.email || 'guest@local';
   })();
 
+  const loadingModelName = MODEL_REGISTRY[selectedModelId]?.label || selectedModelId;
+
   return (
     <div className="poc-container monorepo-web">
+      {/* ── 모델 로딩 풀스크린 오버레이 ── */}
+      <ModelLoadingOverlay
+        isVisible={chatPhase === 'model-loading'}
+        modelName={loadingModelName}
+        onCancel={handleCancelLoadModel}
+      />
       {/*
        * [레이아웃 충돌 수정 원리]
        * 기존: isSidebarOpen===false 시 사이드바를 grid 0px로 숨기고
@@ -496,33 +557,53 @@ export default function App() {
          *  사이드바: open/mini 두 상태 모두 항상 렌더링 유지
          *  (절대 DOM에서 제거하지 않음 → 겹침 버그 원천 차단)
          * ===================================================== */}
-        <section className={`poc-sidebar ${!isSidebarOpen ? 'mini' : ''}`}>
+        <section 
+          className={`poc-sidebar ${
+            isSidebarOpen 
+              ? 'mobile-open md:static md:w-auto md:h-full' 
+              : 'mini mobile-closed'
+          }`}
+        >
 
-          {/* ─── 영역 1 (최상단): 로고 + 토글 버튼 ─────────────── */}
-          <div className="sidebar-header">
+          {/* ─── 영역 1 (최상단): 로고 + 토글/닫기 버튼 ─────────────── */}
+          <div className="sidebar-header flex items-center justify-between p-4 flex-shrink-0">
             {/* 로고: 펼침 상태에서는 텍스트, 미니 상태에서는 클릭 가능한 첫 글자 */}
             <div 
               className={`sidebar-logo ${!isSidebarOpen ? 'clickable' : ''}`}
               onClick={() => { if (!isSidebarOpen) setIsSidebarOpen(true); }}
             >
               {isSidebarOpen ? (
-                <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-light)', letterSpacing: '-0.02em' }}>
-                  Gemma<span style={{ color: 'var(--accent)' }}>4</span>
+                <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-light)', letterSpacing: '-0.02em' }}>
+                  옾피티
                 </span>
               ) : (
-                <span style={{ fontSize: '16px', fontWeight: 800, color: 'var(--accent)' }}>G</span>
+                <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent)' }}>옾</span>
               )}
             </div>
 
-            {/* 토글 버튼: open 상태에서만 표시 (접기 화살표) */}
+            {/* 데스크톱 전용 접기(화살표) 버튼: PC 화면(md 이상)에서만 표시 */}
             {isSidebarOpen && (
               <button
-                className="sidebar-toggle-btn"
+                className="sidebar-toggle-btn hidden md:inline-flex"
                 onClick={() => setIsSidebarOpen(false)}
                 title="사이드바 접기"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
+            )}
+
+            {/* 모바일 전용 닫기(X) 인라인 SVG 버튼: 모바일 화면(md 미만)에서만 표시 */}
+            {isSidebarOpen && (
+              <button 
+                type="button"
+                onClick={() => setIsSidebarOpen(false)} 
+                aria-label="Close menu" 
+                className="p-2 rounded-lg hover:bg-neutral-800 text-gray-400 hover:text-white transition-colors flex md:hidden"
+              >
+                <svg className="w-6 h-6 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             )}
@@ -678,92 +759,129 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 계정 관리 팝업 */}
+                {/* 계정 관리 Drawer / Popover (첨부 이미지와 100% 동일한 레이아웃 + 이용약관) */}
                 {isAccountMenuOpen && (
-                  <div 
-                    className="account-popover"
-                    style={{
-                      position: 'fixed',
-                      bottom: '80px',
-                      left: isSidebarOpen ? '16px' : '72px',
-                      width: isSidebarOpen ? '248px' : '240px',
-                      backgroundColor: 'var(--card-bg)',
-                      border: '1px solid var(--card-border)',
-                      borderRadius: '16px',
-                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.24)',
-                      padding: '20px',
-                      zIndex: 1000,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '16px',
-                    }}
+                  <div
+                    className="account-popover-overlay"
+                    onClick={() => setIsAccountMenuOpen(false)}
                   >
-                    {/* 프로필 영역 */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '8px' }}>
-                      <div 
-                        style={{
-                          width: '56px',
-                          height: '56px',
-                          borderRadius: '50%',
-                          backgroundColor: 'var(--accent)',
-                          color: '#000',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '24px',
-                          fontWeight: 700,
-                          overflow: 'hidden',
-                        }}
+                    <div
+                      className="account-popover-card"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* 닫기 X 버튼 */}
+                      <button
+                        type="button"
+                        className="account-popover-close-btn"
+                        onClick={() => setIsAccountMenuOpen(false)}
+                        aria-label="닫기"
                       >
-                        {authSession?.user?.profileImageUrl && !imageLoadErrors[authSession.user.profileImageUrl] ? (
-                          <img 
-                            src={authSession.user.profileImageUrl} 
-                            alt="Profile" 
-                            referrerPolicy="no-referrer"
-                            onError={() => {
-                              if (authSession?.user?.profileImageUrl) {
-                                setImageLoadErrors(prev => ({ ...prev, [authSession.user.profileImageUrl!]: true }));
-                              }
-                            }}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                          />
-                        ) : (
-                          authSession?.user?.displayName?.charAt(0) || 'U'
-                        )}
-                      </div>
-                      <div style={{ minWidth: 0, width: '100%' }}>
-                        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-light)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {authSession?.user?.displayName || '사용자'}
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+
+                      {/* 상단 프로필 헤더 */}
+                      <div className="account-popover-header">
+                        {/* 큰 아바타 원형 (80px) */}
+                        <div className="account-popover-avatar">
+                          {authSession?.user?.profileImageUrl && !imageLoadErrors[authSession.user.profileImageUrl] ? (
+                            <img 
+                              src={authSession.user.profileImageUrl} 
+                              alt="Profile" 
+                              referrerPolicy="no-referrer"
+                              onError={() => {
+                                if (authSession?.user?.profileImageUrl) {
+                                  setImageLoadErrors(prev => ({ ...prev, [authSession.user.profileImageUrl!]: true }));
+                                }
+                              }}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                            />
+                          ) : (
+                            authSession?.user?.displayName?.charAt(0) || 'U'
+                          )}
                         </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
-                          {displayEmail}
+
+                        {/* 인사말 */}
+                        <div className="account-popover-greeting">
+                          {authSession?.user?.displayName || '사용자'}님, 안녕하세요.
+                        </div>
+
+                        {/* 계정관리 버튼 */}
+                        <button
+                          type="button"
+                          className="account-popover-settings-btn"
+                          onClick={() => {
+                            setIsAccountMenuOpen(false);
+                            setIsSettingsOpen(true);
+                          }}
+                        >
+                          계정관리
+                        </button>
+                      </div>
+
+                      {/* 주요 메뉴 그룹 카드 */}
+                      <div className="account-popover-menu-card">
+                        {/* 1. 다크 모드 토글 */}
+                        <div className="account-menu-item">
+                          <div className="account-menu-item-left">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                            </svg>
+                            <span>다크 모드</span>
+                          </div>
+                          <div 
+                            className={`toggle-switch ${isDarkMode ? 'checked' : ''}`}
+                            onClick={() => setDarkMode(!isDarkMode)}
+                          >
+                            <div className="toggle-switch-handle" />
+                          </div>
+                        </div>
+
+                        <div className="account-menu-divider" />
+
+                        {/* 2. 이용약관 (노션 URL 바로 이동) */}
+                        <div 
+                          className="account-menu-item clickable"
+                          onClick={() => {
+                            window.open('https://plum-puppet-fa1.notion.site/3b9af4da8994803db04ac71d9b8f5d48?source=copy_link', '_blank');
+                          }}
+                        >
+                          <div className="account-menu-item-left">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                              <line x1="16" y1="13" x2="8" y2="13" />
+                              <line x1="16" y1="17" x2="8" y2="17" />
+                              <polyline points="10 9 9 9 8 9" />
+                            </svg>
+                            <span>이용약관</span>
+                          </div>
+                        </div>
+
+                        <div className="account-menu-divider" />
+
+                        {/* 3. 로그아웃 (Red) */}
+                        <div 
+                          className="account-menu-item clickable"
+                          onClick={async () => {
+                            console.log('로그아웃');
+                            await authAdapter.logout();
+                            setIsAccountMenuOpen(false);
+                          }}
+                        >
+                          <div className="account-menu-item-left">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                              <polyline points="16 17 21 12 16 7" />
+                              <line x1="21" y1="12" x2="9" y2="12" />
+                            </svg>
+                            <span style={{ color: '#ef4444' }}>로그아웃</span>
+                          </div>
                         </div>
                       </div>
                     </div>
-
-                    {/* 여백 및 구분선 */}
-                    <div style={{ height: '1px', backgroundColor: 'var(--card-border)', width: '100%' }} />
-
-                    {/* 로그아웃 버튼 */}
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      style={{
-                        width: '100%',
-                        padding: '10px 16px',
-                        borderRadius: '10px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                      }}
-                      onClick={async () => {
-                        console.log('로그아웃');
-                        await authAdapter.logout();
-                        setIsAccountMenuOpen(false);
-                      }}
-                    >
-                      로그아웃
-                    </button>
                   </div>
                 )}
 
@@ -772,7 +890,7 @@ export default function App() {
                   <button 
                     className="sidebar-icon-btn" 
                     title="설정"
-                    onClick={() => setIsSettingsOpen(true)}
+                    onClick={() => setIsAccountMenuOpen(true)}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <circle cx="12" cy="12" r="3" />
@@ -790,11 +908,21 @@ export default function App() {
         {!authSession?.isAuthenticated ? (
           /* ── 비로그인 상태: 히어로 페이지 ── */
           <section className="poc-main" style={{ gap: '0' }}>
-            {/* 우측 상단 로그인 버튼 */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '16px 24px', flexShrink: 0 }}>
+            {/* 상단 헤더 (모바일 햄버거 메뉴 + 우측 로그인 버튼) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexShrink: 0 }}>
               <button
                 type="button"
-                className="btn btn-primary"
+                onClick={() => setIsSidebarOpen(true)}
+                aria-label="Open menu"
+                className="p-2 rounded-lg text-gray-300 hover:bg-neutral-800 transition-colors md:hidden"
+              >
+                <svg className="w-6 h-6 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary ml-auto"
                 style={{ width: 'auto', padding: '10px 24px', borderRadius: '24px', fontSize: '14px', fontWeight: 600 }}
                 onClick={handleLogin}
               >
@@ -825,28 +953,43 @@ export default function App() {
             
             {/* 상단 은은한 헤더 바 (모델 선택기) */}
             <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
-              <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'transparent', padding: '6px 12px', borderRadius: '12px', cursor: 'pointer' }}>
-                <span style={{ fontSize: '18px', fontWeight: 500, color: 'var(--text-light)' }}>
-                  {MODEL_REGISTRY[selectedModelId]?.label || selectedModelId}
-                </span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
-                  <polyline points="6 9 12 15 18 9"></polyline>
+              {/* 모바일 전용 햄버거 메뉴 열기 버튼 */}
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(true)}
+                aria-label="Open menu"
+                className="p-2 rounded-lg text-gray-300 hover:bg-neutral-800 transition-colors md:hidden mr-2 flex-shrink-0"
+              >
+                <svg className="w-6 h-6 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
-                {/* Note: 실제 셀렉트 기능은 커스텀 드롭다운으로 확장 가능하지만, 일단 투명한 네이티브 select를 겹쳐서 동작하게 함 */}
-                <select
-                  disabled={chatPhase === 'model-loading' || chatPhase === 'generating'}
-                  value={selectedModelId}
-                  onChange={(e) => {
-                    const newModelId = e.target.value;
-                    setSelectedModelId(newModelId);
-                  }}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-                >
-                  {Object.entries(MODEL_REGISTRY).map(([key, value]) => (
-                    <option key={key} value={key}>{value.label}</option>
-                  ))}
-                </select>
-              </div>
+              </button>
+
+              {/* 헤더 모델 선택기 (클릭 시 ModelGalleryModal 팝업 노출) */}
+              <button
+                type="button"
+                onClick={() => setIsModelGalleryOpen(true)}
+                disabled={chatPhase === 'model-loading' || chatPhase === 'generating'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--card-border)',
+                  padding: '6px 14px',
+                  borderRadius: '12px',
+                  cursor: chatPhase === 'model-loading' || chatPhase === 'generating' ? 'not-allowed' : 'pointer',
+                  transition: 'background 0.2s, border-color 0.2s',
+                }}
+                title="AI 모델 갤러리 열기"
+              >
+                <span style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-light)' }}>
+                  {MODEL_REGISTRY[loadedModelId || selectedModelId]?.label || (loadedModelId || selectedModelId)}
+                </span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-muted)' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
               
               
               {/* 모델 로드/언로드 상태 및 WebGPU 지원 여부 간략 표시 */}
@@ -859,7 +1002,7 @@ export default function App() {
                 {/* Dummy usage for setSystemPrompt to pass TS check */}
                 <div style={{ display: 'none' }} onClick={() => setSystemPrompt('')}>{systemPrompt}</div>
 
-                {!loadedModelId ? (
+                {!loadedModelId && (
                   <button 
                     type="button" 
                     className="btn btn-primary btn-sm" 
@@ -869,24 +1012,23 @@ export default function App() {
                   >
                     {chatPhase === 'model-loading' ? '모델 준비 중...' : '모델 로드'}
                   </button>
-                ) : (
-                  <button 
-                    type="button" 
-                    className="btn btn-secondary btn-sm" 
-                    onClick={handleUnloadModel}
-                    disabled={chatPhase === 'generating'}
-                    style={{ borderRadius: '999px', padding: '6px 16px', fontSize: '13px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-light)', border: 'none' }}
-                  >
-                    언로드
-                  </button>
                 )}
               </div>
             </div>
 
             {/* 메인 대화창 뷰포트 */}
             {webGpuState.supported === false && (
-              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '12px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                <span style={{ fontSize: '16px' }}>⚠️</span> {webGpuState.error}
+              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.08)', color: '#ef4444', padding: '20px 24px', borderRadius: '12px', margin: '16px', display: 'flex', flexDirection: 'column', gap: '12px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '24px' }}>⚠️</span>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>WebGPU 미지원 브라우저 환경</h4>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>{webGpuState.error || '현재 브라우저는 WebGPU 하드웨어 가속을 지원하지 않습니다.'}</p>
+                  </div>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5', background: 'rgba(0,0,0,0.2)', padding: '10px 14px', borderRadius: '8px' }}>
+                  💡 Gemma 로컬 모델은 WebGPU 호환 브라우저(Chrome 113+, Edge 113+, Safari 18+)에서 최상의 성능으로 구동됩니다. 최신 브라우저 환경에서 접속해 주세요.
+                </div>
               </div>
             )}
             <div className="chat-card">
@@ -904,23 +1046,15 @@ export default function App() {
                 {(!currentSession || currentSession.messages.filter(msg => msg.role !== 'system').length === 0) ? (
                   <div className="chat-empty">
                     <h2 className="gemini-welcome-text">무엇을 도와드릴까요?</h2>
-                    
-                    <div className="prompt-grid">
-                      <div className="gemini-prompt-card" onClick={() => setInput('현재 선택된 Gemma 모델의 강점은 무엇인가요?')}>
-                        <span className="icon">✨</span>
-                        <p>현재 선택된 모델의 강점은 무엇인가요?</p>
-                      </div>
-                      <div className="gemini-prompt-card" onClick={() => setInput('리액트 네이티브에서 WebGPU를 사용할 수 있는 방법론을 설명해줘.')}>
-                        <span className="icon">📱</span>
-                        <p>모바일 기기 내장 WebGPU 활용 방안</p>
-                      </div>
-                      <div className="gemini-prompt-card" onClick={() => setInput('온디바이스 AI의 프라이버시 이점 3가지를 요약해줘.')}>
+
+                    <div className="prompt-grid" style={{ maxWidth: '640px', margin: '32px auto 0' }}>
+                      <div className="gemini-prompt-card" style={{ cursor: 'default' }}>
                         <span className="icon">🔒</span>
-                        <p>온디바이스 AI의 프라이버시 이점 요약</p>
+                        <p>대화 내용은 서버로 전송되지 않고 사용자 기기 내부에서 처리됩니다.</p>
                       </div>
-                      <div className="gemini-prompt-card" onClick={() => setInput('최신 프론트엔드 모노레포 아키텍처 트렌드를 알려줘.')}>
-                        <span className="icon">🏗️</span>
-                        <p>최신 프론트엔드 모노레포 아키텍처</p>
+                      <div className="gemini-prompt-card" style={{ cursor: 'default' }}>
+                        <span className="icon">📡</span>
+                        <p>인터넷 연결 없이도 로컬 AI 추론이 가능합니다.</p>
                       </div>
                     </div>
                   </div>
@@ -1146,10 +1280,10 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveSettingsTab('notifications')}
-                className={`settings-tab-btn ${activeSettingsTab === 'notifications' ? 'active' : ''}`}
+                onClick={() => setActiveSettingsTab('terms')}
+                className={`settings-tab-btn ${activeSettingsTab === 'terms' ? 'active' : ''}`}
               >
-                알림
+                이용약관
               </button>
             </div>
 
@@ -1166,9 +1300,12 @@ export default function App() {
               {/* 헤더 */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <h3 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-light)' }}>
-                  {activeSettingsTab === 'general' && '일반 설정'}
-                  {activeSettingsTab === 'theme' && '테마 설정'}
-                  {activeSettingsTab === 'notifications' && '알림 설정'}
+                  {typeof window !== 'undefined' && window.innerWidth < 768 
+                    ? '계정 설정' 
+                    : (
+                      activeSettingsTab === 'general' ? '일반 설정' :
+                      activeSettingsTab === 'theme' ? '테마 설정' : '이용약관'
+                    )}
                 </h3>
                 <button 
                   type="button"
@@ -1186,103 +1323,139 @@ export default function App() {
                 </button>
               </div>
 
-              {/* 탭별 내용 */}
-              {activeSettingsTab === 'general' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  {/* 프로필 이미지 영역 - 카메라 아이콘 없음 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '12px' }}>
+              {/* 탭별 내용 (모바일 뷰포트에서는 '일반' 탭 전용 노출) */}
+              {(activeSettingsTab === 'general' || (typeof window !== 'undefined' && window.innerWidth < 768)) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                  {/* 프로필 섹션 */}
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '8px', paddingLeft: '4px' }}>
+                      프로필
+                    </div>
                     <div 
-                      style={{
-                        width: '72px',
-                        height: '72px',
-                        borderRadius: '50%',
-                        backgroundColor: 'var(--accent)',
-                        color: '#000',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '32px',
-                        fontWeight: 700,
-                        flexShrink: 0,
-                        overflow: 'hidden',
+                      style={{ 
+                        backgroundColor: 'var(--card-bg)', 
+                        border: '1px solid var(--card-border)', 
+                        borderRadius: '16px', 
+                        overflow: 'hidden' 
                       }}
                     >
-                      {authSession?.user?.profileImageUrl ? (
-                        <img 
-                          src={authSession.user.profileImageUrl} 
-                          alt="Profile" 
-                          referrerPolicy="no-referrer"
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                        />
-                      ) : (
-                        authSession?.user?.displayName?.charAt(0) || 'U'
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <span style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-light)' }}>프로필 사진</span>
-                      <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>기본 아바타 이미지가 사용 중입니다.</span>
+                      {/* Row 1: 프로필 이미지 + 이름 */}
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '16px', gap: '14px' }}>
+                        <div 
+                          style={{
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '50%',
+                            backgroundColor: 'var(--accent)',
+                            color: '#000',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '16px',
+                            fontWeight: 700,
+                            flexShrink: 0,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {authSession?.user?.profileImageUrl && !imageLoadErrors[authSession.user.profileImageUrl] ? (
+                            <img 
+                              src={authSession.user.profileImageUrl} 
+                              alt="Profile" 
+                              referrerPolicy="no-referrer"
+                              onError={() => {
+                                if (authSession?.user?.profileImageUrl) {
+                                  setImageLoadErrors(prev => ({ ...prev, [authSession.user.profileImageUrl!]: true }));
+                                }
+                              }}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                            />
+                          ) : (
+                            authSession?.user?.displayName?.charAt(0) || 'U'
+                          )}
+                        </div>
+                        <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-light)' }}>
+                          {authSession?.user?.displayName || '사용자'}
+                        </div>
+                      </div>
+
+                      <div style={{ height: '1px', backgroundColor: 'var(--card-border)', marginLeft: '66px' }} />
+
+                      {/* Row 2: 이메일 */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--text-light)' }}>
+                            <path d="M4 7.00005L10.2 11.65C11.2667 12.45 12.7333 12.45 13.8 11.65L20 7" />
+                            <rect x="3" y="5" width="18" height="14" rx="2" />
+                          </svg>
+                          <span style={{ fontSize: '15px', color: 'var(--text-light)', fontWeight: 500 }}>이메일</span>
+                        </div>
+                        <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{displayEmail}</span>
+                      </div>
+
+                      <div style={{ height: '1px', backgroundColor: 'var(--card-border)', marginLeft: '66px' }} />
+
+                      {/* Row 3: 소셜 연동 계정 */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          {authSession?.user?.linkedProviders?.[0] === 'google' ? (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                              <path d="M22.56 12.25C22.56 11.47 22.49 10.72 22.36 10H12V14.26H17.92C17.67 15.63 16.89 16.79 15.73 17.57V20.34H19.29C21.37 18.42 22.56 15.6 22.56 12.25Z" fill="#4285F4" />
+                              <path d="M12 23C14.97 23 17.46 22.02 19.29 20.34L15.73 17.57C14.74 18.23 13.48 18.63 12 18.63C9.14 18.63 6.7 16.7 5.84 14.11H2.17V16.96C3.99 20.57 7.68 23 12 23Z" fill="#34A853" />
+                              <path d="M5.84 14.11C5.62 13.45 5.49 12.74 5.49 12C5.49 11.26 5.62 10.55 5.84 9.89V7.04H2.17C1.42 8.52 1 10.21 1 12C1 13.79 1.42 15.48 2.17 16.96L5.84 14.11Z" fill="#FBBC05" />
+                              <path d="M12 5.38C13.62 5.38 15.07 5.94 16.22 7.03L19.37 3.88C17.46 2.09 14.97 1 12 1C7.68 1 3.99 3.43 2.17 7.04L5.84 9.89C6.7 7.3 9.14 5.38 12 5.38Z" fill="#EA4335" />
+                            </svg>
+                          ) : authSession?.user?.linkedProviders?.[0] === 'naver' ? (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                              <path d="M13.6 12.32L10.16 7H7V17H10.4V11.68L13.84 17H17V7H13.6V12.32Z" fill="#03C75A" />
+                            </svg>
+                          ) : authSession?.user?.linkedProviders?.[0] === 'kakao' ? (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                              <path d="M12 3C7.03 3 3 6.36 3 10.5C3 13.03 4.45 15.27 6.68 16.69L5.78 19.94C5.72 20.17 5.97 20.36 6.17 20.23L9.93 17.77C10.6 17.87 11.29 17.92 12 17.92C16.97 17.92 21 14.56 21 10.5C21 6.36 16.97 3 12 3Z" fill="#FEE500" />
+                            </svg>
+                          ) : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                              <path d="M22.56 12.25C22.56 11.47 22.49 10.72 22.36 10H12V14.26H17.92C17.67 15.63 16.89 16.79 15.73 17.57V20.34H19.29C21.37 18.42 22.56 15.6 22.56 12.25Z" fill="#4285F4" />
+                            </svg>
+                          )}
+                          <span style={{ fontSize: '15px', color: 'var(--text-light)', fontWeight: 500 }}>
+                            {authSession?.user?.linkedProviders?.[0] 
+                              ? (authSession.user.linkedProviders[0] === 'google' ? 'Google' : authSession.user.linkedProviders[0] === 'naver' ? '네이버' : authSession.user.linkedProviders[0] === 'kakao' ? '카카오' : authSession.user.linkedProviders[0])
+                              : '소셜 계정'}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>연결됨</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* 입력 필드들 - readOnly & disabled */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-light)' }}>사용자 이름</label>
-                      <input 
-                        type="text" 
-                        value={authSession?.user?.displayName || '사용자'} 
-                        readOnly 
-                        disabled
-                        className="settings-readonly-input"
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-light)' }}>이메일 주소</label>
-                      <input 
-                        type="text" 
-                        value={displayEmail} 
-                        readOnly 
-                        disabled
-                        className="settings-readonly-input"
-                      />
-                    </div>
-
-                    {/* 탈퇴하기 버튼 - 생일 입력 필드 대체 */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '12px' }}>
-                      <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-light)' }}>계정 탈퇴</label>
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                        <button
-                          type="button"
-                          className="btn btn-danger"
-                          style={{
-                            padding: '10px 16px',
-                            borderRadius: '10px',
-                            fontSize: '13px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            width: 'auto',
-                          }}
-                          onClick={async () => {
-                            if (confirm('정말로 탈퇴하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
-                              console.log('탈퇴하기');
-                              await authAdapter.deleteAccount();
-                              setIsSettingsOpen(false);
-                            }
-                          }}
-                        >
-                          탈퇴하기
-                        </button>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                          계정을 삭제하고 서비스 이용 정보를 영구 삭제합니다.
-                        </span>
+                  {/* 계정 삭제 섹션 */}
+                  <div>
+                    <div 
+                      style={{ 
+                        backgroundColor: 'var(--card-bg)', 
+                        border: '1px solid var(--card-border)', 
+                        borderRadius: '16px', 
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onClick={async () => {
+                        if (confirm('정말로 탈퇴하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                          console.log('탈퇴하기');
+                          await authAdapter.deleteAccount();
+                          setIsSettingsOpen(false);
+                        }
+                      }}
+                    >
+                      <div style={{ padding: '16px', textAlign: 'center', color: '#ef4444', fontWeight: 600, fontSize: '15px' }}>
+                        계정 삭제
                       </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {activeSettingsTab === 'theme' && (
+              {activeSettingsTab === 'theme' && (typeof window !== 'undefined' && window.innerWidth >= 768) && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>화면 테마를 변경할 수 있습니다.</p>
                   <div style={{ display: 'flex', gap: '12px' }}>
@@ -1304,19 +1477,37 @@ export default function App() {
                 </div>
               )}
 
-              {activeSettingsTab === 'notifications' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>알림 수신 설정을 변경합니다.</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: 'var(--text-light)' }}>
-                      <input type="checkbox" defaultChecked />
-                      <span>이메일 공지사항 및 기능 업데이트 수신</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', color: 'var(--text-light)' }}>
-                      <input type="checkbox" defaultChecked />
-                      <span>브라우저 데스크톱 푸시 알림 수신</span>
-                    </label>
-                  </div>
+              {activeSettingsTab === 'terms' && (typeof window !== 'undefined' && window.innerWidth >= 768) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'flex-start' }}>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+                    서비스 이용에 필요한 약관 및 개인정보 처리방침 상세 내용을 확인하실 수 있습니다.
+                  </p>
+                  
+                  <a
+                    href="https://plum-puppet-fa1.notion.site/3b9af4da8994803db04ac71d9b8f5d48?source=copy_link"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-primary"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      padding: '10px 18px',
+                      borderRadius: '10px',
+                      fontSize: '13.5px',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                      width: 'fit-content',
+                    }}
+                  >
+                    <span>이용약관 문서 보기</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15 3 21 3 21 9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                  </a>
                 </div>
               )}
             </div>
@@ -1330,6 +1521,19 @@ export default function App() {
           onLoginProvider={handleLoginProvider}
         />
       )}
+
+      {/* AI 모델 갤러리 팝업 모달 */}
+      <ModelGalleryModal
+        isOpen={isModelGalleryOpen}
+        onClose={() => setIsModelGalleryOpen(false)}
+        currentLoadedModelId={loadedModelId}
+        selectedModelId={selectedModelId}
+        onSelectAndLoadModel={(targetModelId) => {
+          setIsModelGalleryOpen(false);
+          setSelectedModelId(targetModelId);
+          handleLoadModel(targetModelId);
+        }}
+      />
     </div>
   );
 }

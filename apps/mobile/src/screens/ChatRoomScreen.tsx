@@ -893,12 +893,12 @@ export default function ChatRoomScreen({ route, navigation }: any) {
           />
           <Text style={[styles.modelStatusText, { color: colors.text, flex: 1 }]}>
             {modelState.status === 'downloading' && `온디바이스 LLM 다운로드 중... (${(modelState as any).progress}%)`}
-            {modelState.status === 'loading' && '모델 메모리 적재 중...'}
+            {modelState.status === 'loading' && '모델 메모리 로딩중...'}
             {/* [전략 B 추가] prefill 중 정지 눌러서 아직 실제 중단이 예약된 상태 */}
             {modelState.status === 'ready' && isDeferredStop && '정지 예약됨 · 첫 응답 대기 중...'}
             {/* [전략 A 추가] 정지 후 백그라운드 정리 중임을 사용자에게 알림 */}
             {modelState.status === 'ready' && !isDeferredStop && isSettling && '이전 응답 정리 중...'}
-            {modelState.status === 'ready' && !isDeferredStop && !isSettling && `${currentModelEntry.name} (Local 추론 준비 완료)`}
+            {modelState.status === 'ready' && !isDeferredStop && !isSettling && `${currentModelEntry.name} (선택됨)`}
             {modelState.status === 'idle' && isModelDownloaded && 'AI 모델 대기 중 (수동 로드 필요)'}
             {modelState.status === 'idle' && !isModelDownloaded && '모델이 다운로드되지 않았습니다. 모델 갤러리에서 다운로드해주세요.'}
             {modelState.status === 'error' && '모델 로드 실패'}

@@ -58,18 +58,23 @@ class SessionRepository:
     ) -> Optional[AuthSession]:
         """리프레시 토큰 해시로 활성 세션을 조회한다.
 
-        취소되지 않은(revoked_at IS NULL) 세션만 반환한다.
-
-        Args:
-            db: 비동기 데이터베이스 세션.
-            refresh_token_hash: 조회할 리프레시 토큰의 SHA-256 해시.
-
-        Returns:
-            해당 세션 모델 인스턴스 또는 None.
+        취소되지 않은(is_revoked IS False) 세션만 반환한다.
         """
         stmt = select(AuthSession).where(
             AuthSession.refresh_token_hash == refresh_token_hash,
-            AuthSession.revoked_at.is_(None),
+            AuthSession.is_revoked == False,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_any_by_refresh_hash(
+        self,
+        db: AsyncSession,
+        refresh_token_hash: str,
+    ) -> Optional[AuthSession]:
+        """리프레시 토큰 해시로 세션(활성 및 폐기 포함)을 조회한다."""
+        stmt = select(AuthSession).where(
+            AuthSession.refresh_token_hash == refresh_token_hash,
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
@@ -79,16 +84,11 @@ class SessionRepository:
         db: AsyncSession,
         session_id: UUID,
     ) -> None:
-        """특정 세션을 취소한다.
-
-        Args:
-            db: 비동기 데이터베이스 세션.
-            session_id: 취소할 세션 UUID.
-        """
+        """특정 세션을 취소한다."""
         stmt = (
             update(AuthSession)
-            .where(AuthSession.id == session_id, AuthSession.revoked_at.is_(None))
-            .values(revoked_at=func.now())
+            .where(AuthSession.id == session_id, AuthSession.is_revoked == False)
+            .values(is_revoked=True)
         )
         await db.execute(stmt)
 
@@ -97,21 +97,11 @@ class SessionRepository:
         db: AsyncSession,
         user_id: UUID,
     ) -> int:
-        """특정 사용자의 모든 활성 세션을 취소한다.
-
-        비밀번호 변경, 계정 보안 이슈 등에서 모든 세션을 무효화할 때 사용한다.
-
-        Args:
-            db: 비동기 데이터베이스 세션.
-            user_id: 대상 사용자 UUID.
-
-        Returns:
-            취소된 세션 수.
-        """
+        """특정 사용자의 모든 활성 세션을 취소한다."""
         stmt = (
             update(AuthSession)
-            .where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
-            .values(revoked_at=func.now())
+            .where(AuthSession.user_id == user_id, AuthSession.is_revoked == False)
+            .values(is_revoked=True)
         )
         result = await db.execute(stmt)
         return result.rowcount  # type: ignore[return-value]

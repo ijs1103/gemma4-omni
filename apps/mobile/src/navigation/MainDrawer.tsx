@@ -17,7 +17,7 @@ export default function MainDrawer() {
         headerShown: false,
         drawerType: 'slide',
         drawerStyle: {
-          width: '85%',
+          width: '100%',
           backgroundColor: '#f8f9fa',
         },
       }}

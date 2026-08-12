@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { toast } from 'react-toastify';
 import type { Attachment } from '@repo/ai-core';
+import { CodeBlock } from './CodeBlock';
 
 interface ChatBubbleProps {
   content: string;
@@ -43,7 +44,7 @@ const fallbackCopyTextToClipboard = (text: string) => {
   document.body.removeChild(textArea);
 };
 
-export const ChatBubble: React.FC<ChatBubbleProps> = ({
+export const ChatBubble: React.FC<ChatBubbleProps> = React.memo(({
   content,
   isUser,
   isThinking = false,
@@ -103,6 +104,27 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
                 <ReactMarkdown 
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[rehypeKatex]}
+                  components={{
+                    code({ node, inline, className, children, ...props }: any) {
+                      const match = /language-(\w+)/.exec(className || '');
+                      const codeContent = String(children).replace(/\n$/, '');
+                      const isInline = inline || (!match && !codeContent.includes('\n'));
+                      
+                      if (!isInline) {
+                        return (
+                          <CodeBlock
+                            code={codeContent}
+                            language={match ? match[1] : 'text'}
+                          />
+                        );
+                      }
+                      return (
+                        <code className={`${className || ''} bg-white/10 px-1.5 py-0.5 rounded text-sm`} {...props}>
+                          {children}
+                        </code>
+                      );
+                    }
+                  }}
                 >
                   {content || '...'}
                 </ReactMarkdown>
@@ -144,4 +166,10 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
       )}
     </div>
   );
-};
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.content === nextProps.content &&
+    prevProps.isThinking === nextProps.isThinking &&
+    prevProps.isInterrupted === nextProps.isInterrupted
+  );
+});

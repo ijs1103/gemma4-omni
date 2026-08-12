@@ -44,6 +44,8 @@ export class MobileStorageAdapter implements StorageAdapter {
         FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
       );
     `);
+    this.db.execute(`CREATE INDEX IF NOT EXISTS ix_sessions_updatedAt ON sessions(updatedAt DESC);`);
+    this.db.execute(`CREATE INDEX IF NOT EXISTS ix_messages_sessionId ON messages(sessionId);`);
     // isThinking 등 확장 필드를 저장하는 extraData 컬럼 마이그레이션
     // 이미 테이블이 있는 경우 컬럼이 없을 수 있으므로 안전하게 추가
     try {

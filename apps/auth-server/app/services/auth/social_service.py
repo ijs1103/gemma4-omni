@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import secrets
+import time
 from uuid import UUID
 
 import redis.asyncio as aioredis
@@ -48,6 +49,22 @@ logger = logging.getLogger(__name__)
 # ── Redis 키 접두사 ──────────────────────────────────────────────
 OAUTH_STATE_PREFIX = "oauth:state:"
 OAUTH_STATE_TTL = settings.OAUTH_STATE_TTL_SECONDS  # 기본 300초 (5분)
+
+# Redis 미구동 환경(개발용)을 위한 인메모리 폴백 저장소 (key -> (expires_at, state_json))
+_in_memory_oauth_state: dict[str, tuple[float, str]] = {}
+
+_redis_pool: Optional[aioredis.ConnectionPool] = None
+
+
+def _get_redis_pool() -> aioredis.ConnectionPool:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = aioredis.ConnectionPool.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=20,
+        )
+    return _redis_pool
 
 
 def _generate_code_verifier() -> str:
@@ -97,11 +114,8 @@ class SocialAuthService:
         self._token_service = token_svc or token_service
 
     def _get_redis(self) -> aioredis.Redis:
-        """Redis 비동기 클라이언트를 생성한다."""
-        return aioredis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-        )
+        """Redis 비동기 클라이언트를 ConnectionPool로부터 생성한다."""
+        return aioredis.Redis(connection_pool=_get_redis_pool())
 
     # ════════════════════════════════════════════════════════════
     # 1. 소셜 로그인 시작 (authorize URL 생성)
@@ -147,15 +161,22 @@ class SocialAuthService:
             "code_verifier": code_verifier,
         }
 
-        redis = self._get_redis()
+        state_key = f"{OAUTH_STATE_PREFIX}{state}"
+        state_json_str = json.dumps(state_data)
+
         try:
-            await redis.setex(
-                f"{OAUTH_STATE_PREFIX}{state}",
-                OAUTH_STATE_TTL,
-                json.dumps(state_data),
-            )
-        finally:
-            await redis.aclose()
+            redis = self._get_redis()
+            try:
+                await redis.setex(
+                    state_key,
+                    OAUTH_STATE_TTL,
+                    state_json_str,
+                )
+            finally:
+                await redis.aclose()
+        except Exception as e:
+            logger.warning("Redis 저장 실패 (%s). 인메모리 저장소로 폴백합니다.", e)
+            _in_memory_oauth_state[state_key] = (time.time() + OAUTH_STATE_TTL, state_json_str)
 
         # 프로바이더별 authorize URL 생성
         authorize_url = await adapter.build_authorize_url(
@@ -218,18 +239,28 @@ class SocialAuthService:
         code_verifier: Optional[str] = None
 
         if payload.state:
-            redis = self._get_redis()
+            state_key = f"{OAUTH_STATE_PREFIX}{payload.state}"
+            state_json: Optional[str] = None
+
             try:
-                state_key = f"{OAUTH_STATE_PREFIX}{payload.state}"
-                state_json = await redis.get(state_key)
+                redis = self._get_redis()
+                try:
+                    state_json = await redis.get(state_key)
+                    if state_json:
+                        await redis.delete(state_key)
+                finally:
+                    await redis.aclose()
+            except Exception as e:
+                logger.warning("Redis 조회 실패 (%s). 인메모리 저장소에서 확인합니다.", e)
 
-                if state_json is None:
-                    raise InvalidStateError("OAuth state가 만료되었거나 유효하지 않습니다.")
+            # Redis에 없거나 Redis 실패 시 인메모리 저장소 확인
+            if state_json is None and state_key in _in_memory_oauth_state:
+                expires_at, data_str = _in_memory_oauth_state.pop(state_key)
+                if time.time() < expires_at:
+                    state_json = data_str
 
-                # state는 1회성 — 즉시 삭제
-                await redis.delete(state_key)
-            finally:
-                await redis.aclose()
+            if state_json is None:
+                raise InvalidStateError("OAuth state가 만료되었거나 유효하지 않습니다.")
 
             state_data = json.loads(state_json)
 

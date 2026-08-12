@@ -86,8 +86,14 @@ class GoogleAdapter(SocialProviderAdapter):
 
         if resp.status_code != 200:
             logger.error("Google 토큰 교환 실패: status=%d body=%s", resp.status_code, resp.text)
+            err_msg = resp.text
+            try:
+                err_json = resp.json()
+                err_msg = err_json.get("error_description") or err_json.get("error") or resp.text
+            except Exception:
+                pass
             raise OAuthProviderError(
-                detail=f"Google 토큰 교환 실패 (HTTP {resp.status_code})"
+                detail=f"Google 토큰 교환 실패 (HTTP {resp.status_code}): {err_msg}"
             )
 
         return resp.json()

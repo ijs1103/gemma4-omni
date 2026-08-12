@@ -355,7 +355,7 @@ export const ModelGalleryScreen = () => {
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
-          <Text style={[styles.headerTitle, { color: colors.titleText }]}>AI Chat</Text>
+          <Text style={[styles.headerTitle, { color: colors.titleText }]}>모델 선택</Text>
           <View style={[styles.headerIndicator, { backgroundColor: colors.indicatorBar }]} />
         </View>
 
@@ -363,20 +363,12 @@ export const ModelGalleryScreen = () => {
         <View style={styles.headerSpacer} />
       </View>
 
-      <Text style={[styles.headerSubtitle, { color: colors.subtitleText, backgroundColor: colors.headerBg }]}>
-        {MODEL_CATALOG.length} models available
-      </Text>
-
       {/* ── Scrollable body ── */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={[styles.sectionTitle, { color: colors.sectionTitle }]}>
-          Recommended models
-        </Text>
-
         {MODEL_CATALOG.map((entry) => {
           const state = downloadStates[entry.id] || { status: 'idle' };
           return (

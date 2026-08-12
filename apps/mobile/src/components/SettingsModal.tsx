@@ -8,7 +8,8 @@ import {
   Switch, 
   Dimensions,
   Platform,
-  Image
+  Image,
+  Linking
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { 
@@ -17,7 +18,7 @@ import Animated, {
   withTiming, 
   runOnJS 
 } from 'react-native-reanimated';
-import { X, LogOut, Moon } from 'lucide-react-native';
+import { X, LogOut, Moon, FileText } from 'lucide-react-native';
 import { useThemeContext } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { MobileAuthAdapter } from '../adapters/MobileAuthAdapter';
@@ -85,6 +86,10 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
     }, 150);
   };
 
+  const handleTermsOfService = () => {
+    Linking.openURL('https://plum-puppet-fa1.notion.site/3b9af4da8994803db04ac71d9b8f5d48?source=copy_link');
+  };
+
   // Reanimated 4.4.1 적용: translateX 값을 변환하는 애니메이션 스타일 정의
   const animatedStyle = useAnimatedStyle(() => {
     return {
@@ -150,6 +155,15 @@ export default function SettingsModal({ visible, onClose }: SettingsModalProps) 
               
               <View style={[styles.divider, { backgroundColor: colors.border }]} />
               
+              <TouchableOpacity style={styles.menuItem} onPress={handleTermsOfService}>
+                <View style={styles.menuItemLeft}>
+                  <FileText color={colors.text} size={24} />
+                  <Text style={[styles.menuItemText, { color: colors.text }]}>이용약관</Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
               <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
                 <View style={styles.menuItemLeft}>
                   <LogOut color="#d93025" size={24} />
