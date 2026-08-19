@@ -36,10 +36,13 @@ import { ChatBottomSheet } from '../components/ChatBottomSheet';
 import { RenameChatModal } from '../components/RenameChatModal';
 import { DeleteConfirmModal } from '../components/DeleteConfirmModal';
 import { useChat } from '../context/ChatContext';
+import { authAdapter } from '../context/AuthContext';
+import { MobileRemoteChatAdapter } from '../adapters/MobileRemoteChatAdapter';
 import { useTheme } from '@react-navigation/native';
 
 // 싱글톤 어댑터 — 전역 어댑터 싱글톤(getLiteRTAdapter)으로 통합
 let _storage: MobileStorageAdapter | null = null;
+const remoteAdapter = new MobileRemoteChatAdapter(authAdapter);
 function getModelAdapter() {
   return getLiteRTAdapter();
 }
@@ -47,6 +50,7 @@ function getStorage(): MobileStorageAdapter {
   if (!_storage) _storage = new MobileStorageAdapter();
   return _storage;
 }
+
 
 // ─── [전략 A: Soft Stop] 정지 후 백그라운드 정리 상태 감지용 이벤트 브릿지 ──────
 // LiteRTModule이 발송하는 onGenerationInterrupted / onGenerationSettled를 직접 구독한다.
@@ -65,7 +69,9 @@ const liteRTLifecycleEmitter = LiteRTNativeModule
 interface DisplayMessage extends ChatMessage {
   isThinking?: boolean;
   isInterrupted?: boolean;
+  syncStatus?: 'pending' | 'synced';
 }
+
 
 // ─── 로딩 점 애니메이션 컴포넌트 ─────────────────────────────────────────────
 function ThinkingDots() {
@@ -494,7 +500,42 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     const loadSessionData = async () => {
       if (initialSessionId) {
         try {
-          const loaded = await getStorage().loadSession(initialSessionId);
+          let loaded = await getStorage().loadSession(initialSessionId);
+
+          // ── 서버에서 원격 메시지 최신 동기화 ─────────────────────────────
+          const authSession = await authAdapter.getSession();
+          if (authSession?.isAuthenticated) {
+            try {
+              const remoteMsgs = await remoteAdapter.fetchMessages(initialSessionId);
+              if (remoteMsgs && remoteMsgs.length > 0) {
+                const restoredMsgs: DisplayMessage[] = remoteMsgs.map((rm) => ({
+                  id: rm.id,
+                  role: rm.role as any,
+                  content: rm.content,
+                  timestamp: new Date(rm.created_at).getTime(),
+                  syncStatus: 'synced',
+                }));
+                if (loaded) {
+                  loaded = { ...loaded, messages: restoredMsgs, sessionSyncStatus: 'synced' };
+                } else {
+                  loaded = {
+                    id: initialSessionId,
+                    title: '대화방',
+                    status: 'active',
+                    modelId: modelId,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    messages: restoredMsgs,
+                    sessionSyncStatus: 'synced',
+                  };
+                }
+                await getStorage().saveSession(loaded);
+              }
+            } catch (err) {
+              console.warn('[ChatRoom] 원격 메시지 로드 실패 (로컬 사용):', err);
+            }
+          }
+
           if (loaded) {
             if (loaded.modelId && MODEL_CATALOG.some(e => e.id === loaded.modelId)) {
               setModelId(loaded.modelId as ModelId);
@@ -579,6 +620,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     loadSessionData();
   }, [initialSessionId]);
 
+
   // ── 수동 모델 로드 ─────────────────────────────────────────────────────────
   const handleLoadModel = async () => {
     if (modelState.status === 'loading' || modelState.status === 'downloading') return;
@@ -648,22 +690,67 @@ export default function ChatRoomScreen({ route, navigation }: any) {
 
     let curSessionId = activeSessionId;
     let curCreatedAt = sessionCreatedAt;
+    let isNewSession = false;
 
     if (!curSessionId) {
-      curSessionId = Date.now().toString();
+      isNewSession = true;
+      curSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       curCreatedAt = Date.now();
       setActiveSessionId(curSessionId);
       setSessionCreatedAt(curCreatedAt);
     }
 
+    const firstUserMsgForTitle = inputText.trim()
+      ? inputText.trim().slice(0, 18) + (inputText.trim().length > 18 ? '...' : '')
+      : '새로운 대화';
+    const sessionTitleEarly = currentChatTitle === '대화방' ? firstUserMsgForTitle : currentChatTitle;
+    if (isNewSession) {
+      setCurrentChatTitle(sessionTitleEarly);
+    }
+
+    // ── 원격 서버에 세션 생성 (새 세션일 때) ───────────────────
+    const authSession = await authAdapter.getSession();
+    let sessionSyncStatus: 'pending' | 'synced' = 'pending';
+    if (isNewSession && authSession?.isAuthenticated) {
+      try {
+        await remoteAdapter.createSession({
+          id: curSessionId,
+          title: sessionTitleEarly,
+          model_id: modelId,
+          created_at: new Date(curCreatedAt || Date.now()).toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        sessionSyncStatus = 'synced';
+      } catch (e) {
+        console.warn('[ChatRoom] 원격 세션 생성 실패 (pending):', e);
+      }
+    }
+
     // 1. 사용자 메시지 추가
+    const userMsgId = `msg_${Date.now()}_u`;
     const userMsg: DisplayMessage = {
-      id: Date.now().toString(),
+      id: userMsgId,
       role: 'user',
       content: inputText,
       attachments: pendingAttachments.length > 0 ? [...pendingAttachments] : undefined,
       timestamp: Date.now(),
+      syncStatus: 'pending',
     };
+
+    // ── 원격 서버에 유저 메시지 전송 ────────────────────────────
+    if (authSession?.isAuthenticated) {
+      try {
+        await remoteAdapter.postMessage(curSessionId, {
+          id: userMsg.id,
+          role: userMsg.role,
+          content: userMsg.content,
+          created_at: new Date(userMsg.timestamp).toISOString(),
+        });
+        userMsg.syncStatus = 'synced';
+      } catch (e) {
+        console.warn('[ChatRoom] 유저 메시지 원격 전송 실패 (pending):', e);
+      }
+    }
 
     const updatedMessagesWithUser = [...messages, userMsg];
     setMessages(updatedMessagesWithUser);
@@ -672,27 +759,20 @@ export default function ChatRoomScreen({ route, navigation }: any) {
     setIsGenerating(true);
 
     // 2. AI 로딩 버블 추가 (isThinking: true)
-    const assistantMsgId = (Date.now() + 1).toString();
+    const assistantMsgId = `msg_${Date.now()}_a`;
     const thinkingMsg: DisplayMessage = {
       id: assistantMsgId,
       role: 'assistant',
       content: '',
       timestamp: Date.now() + 1,
       isThinking: true,
+      syncStatus: 'pending',
     };
 
     const msgsWithThinking = [...updatedMessagesWithUser, thinkingMsg];
     setMessages(msgsWithThinking);
 
     // ★ 핵심: 추론 시작 전에 isThinking=true 상태를 storage에 즉시 저장
-    // → 뒤로가기 후 재진입해도 추론 중 버블이 복원되고 이어서 추론함
-    const firstUserMsgForTitle = updatedMessagesWithUser.find((m) => m.role === 'user');
-    const sessionTitleEarly = firstUserMsgForTitle
-      ? firstUserMsgForTitle.content.slice(0, 18) + (firstUserMsgForTitle.content.length > 18 ? '...' : '')
-      : '새로운 로컬 대화';
-    if (!initialSessionId) {
-      setCurrentChatTitle(sessionTitleEarly);
-    }
     getStorage().saveSession({
       id: curSessionId,
       title: sessionTitleEarly,
@@ -700,6 +780,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       modelId: modelId,
       createdAt: curCreatedAt || Date.now(),
       updatedAt: Date.now(),
+      sessionSyncStatus,
       messages: msgsWithThinking as any,
     }).then(() => loadSessions()).catch((e) => console.error('[ChatRoom] 추론 전 저장 실패:', e));
 
@@ -732,12 +813,28 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       const wasInterrupted = isInterruptedRef.current;
       isInterruptedRef.current = false; // 리셋
 
+      let assistantSyncStatus: 'pending' | 'synced' = 'pending';
+      if (authSession?.isAuthenticated) {
+        try {
+          await remoteAdapter.postMessage(curSessionId, {
+            id: assistantMsgId,
+            role: 'assistant',
+            content: accumulatedText,
+            created_at: new Date().toISOString(),
+          });
+          assistantSyncStatus = 'synced';
+        } catch (e) {
+          console.warn('[ChatRoom] 어시스턴트 메시지 원격 전송 실패 (pending):', e);
+        }
+      }
+
       const completedAssistantMsg: DisplayMessage = {
         id: assistantMsgId,
         role: 'assistant',
         content: accumulatedText,
         timestamp: Date.now(),
         isThinking: false,
+        syncStatus: assistantSyncStatus,
         ...(wasInterrupted ? { isInterrupted: true } : {}),
       };
 
@@ -748,7 +845,7 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       const firstUserMsg = finalMessages.find((m) => m.role === 'user');
       const sessionTitle = firstUserMsg
         ? firstUserMsg.content.slice(0, 18) + (firstUserMsg.content.length > 18 ? '...' : '')
-        : '새로운 로컬 대화';
+        : sessionTitleEarly;
 
       await getStorage().saveSession({
         id: curSessionId,
@@ -757,7 +854,8 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         modelId: modelId,
         createdAt: curCreatedAt || Date.now(),
         updatedAt: Date.now(),
-        messages: finalMessages,
+        sessionSyncStatus: 'synced',
+        messages: finalMessages as any,
       });
       await loadSessions();
     } catch (error) {
@@ -782,12 +880,14 @@ export default function ChatRoomScreen({ route, navigation }: any) {
         modelId: modelId,
         createdAt: curCreatedAt || Date.now(),
         updatedAt: Date.now(),
+        sessionSyncStatus,
         messages: errMsgs as any,
       }).then(() => loadSessions()).catch(() => {});
     } finally {
       setIsGenerating(false);
     }
   };
+
 
   // ── 생성 중단(Interrupt) 핸들러 ──────────────────────────────────────────────
   const handleInterrupt = async () => {

@@ -5,13 +5,18 @@ Alembic이 마이그레이션 시 모든 모델의 메타데이터를 인식하�
 """
 
 from app.models.auth_session import AuthSession
+from app.models.chat_session import ChatSession
+from app.models.message import Message
 from app.models.oauth_credential import OAuthCredential
 from app.models.social_account import SocialAccount
 from app.models.user import User
 
 __all__ = [
     "AuthSession",
+    "ChatSession",
+    "Message",
     "OAuthCredential",
     "SocialAccount",
     "User",
 ]
+

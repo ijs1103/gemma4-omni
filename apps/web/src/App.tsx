@@ -16,6 +16,7 @@ import {
 import { LiteRTLMAdapter } from './adapters/LiteRTLMAdapter';
 import { WebStorageAdapter } from './adapters/WebStorageAdapter';
 import { WebAuthAdapter } from './adapters/WebAuthAdapter';
+import { WebRemoteChatAdapter } from './adapters/WebRemoteChatAdapter';
 
 import { ChatBubble } from './components/ChatBubble';
 import { AttachmentPreview } from './components/AttachmentPreview';
@@ -33,6 +34,8 @@ import 'react-toastify/dist/ReactToastify.css';
 const llmAdapter = new LiteRTLMAdapter();
 const storageAdapter = new WebStorageAdapter();
 const authAdapter = new WebAuthAdapter();
+const remoteChatAdapter = new WebRemoteChatAdapter(authAdapter);
+
 
 export default function App() {
   // WebGPU 진단 상태
@@ -224,11 +227,190 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentSession?.messages, chatPhase]);
 
-  // 2. 세션 리스트 갱신 함수
+  // 오프라인/재연결 시 펜딩 데이터 통합 재시도 함수 (인증 가드 포함)
+  const retryPendingSync = async () => {
+    const session = await authAdapter.getSession();
+    if (!session?.isAuthenticated) return;
+
+    try {
+      const summaries = await storageAdapter.listSessions();
+      for (const summary of summaries) {
+        const chatSession = await storageAdapter.loadSession(summary.id);
+        if (!chatSession) continue;
+
+        let sessionReady = true;
+
+        if (chatSession.sessionSyncStatus === 'pending') {
+          try {
+            await remoteChatAdapter.createSession({
+              id: chatSession.id,
+              title: chatSession.title,
+              model_id: chatSession.modelId,
+              created_at: new Date(chatSession.createdAt).toISOString(),
+              updated_at: new Date(chatSession.updatedAt).toISOString(),
+            });
+            chatSession.sessionSyncStatus = 'synced';
+            await storageAdapter.saveSession(chatSession);
+          } catch (e: any) {
+            if (e.message?.includes('410')) {
+              await storageAdapter.deleteSession(chatSession.id);
+              continue;
+            }
+            console.warn(`[Web retryPendingSync] 세션 ${chatSession.id} 생성 실패:`, e);
+            sessionReady = false;
+          }
+        }
+
+        if (!sessionReady) continue;
+
+        let hasUpdates = false;
+        const pendingMsgs = chatSession.messages.filter(m => m.syncStatus === 'pending');
+        for (const msg of pendingMsgs) {
+          try {
+            await remoteChatAdapter.postMessage(chatSession.id, {
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              created_at: new Date(msg.timestamp).toISOString(),
+            });
+            msg.syncStatus = 'synced';
+            hasUpdates = true;
+          } catch (e) {
+            console.warn(`[Web retryPendingSync] 메시지 ${msg.id} 전송 실패:`, e);
+            break;
+          }
+        }
+
+        if (hasUpdates) {
+          await storageAdapter.saveSession(chatSession);
+        }
+      }
+    } catch (e) {
+      console.warn('[Web retryPendingSync] 오류:', e);
+    }
+  };
+
+  // 2. 세션 리스트 갱신 함수 (원격 서버 목록 동기화 포함)
   const refreshSessionList = async () => {
+    const session = await authAdapter.getSession();
+    if (session?.isAuthenticated) {
+      // 1회성 마이그레이션 (유저별 lastSyncedAt 체크)
+      const lastSyncedKey = `web_lastSyncedAt_${session.user.id}`;
+      const lastSyncedAt = localStorage.getItem(lastSyncedKey);
+      if (!lastSyncedAt) {
+        const localList = await storageAdapter.listSessions();
+        const syncPayload = [];
+        for (const s of localList) {
+          const loaded = await storageAdapter.loadSession(s.id);
+          if (loaded) {
+            syncPayload.push({
+              id: loaded.id,
+              title: loaded.title,
+              model_id: loaded.modelId,
+              status: loaded.status,
+              created_at: new Date(loaded.createdAt).toISOString(),
+              updated_at: new Date(loaded.updatedAt).toISOString(),
+              messages: loaded.messages.map(m => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                created_at: new Date(m.timestamp).toISOString(),
+              })),
+            });
+          }
+        }
+        if (syncPayload.length > 0) {
+          try {
+            await remoteChatAdapter.syncPush(syncPayload);
+          } catch (e) {
+            console.warn('[Web refreshSessionList] syncPush 실패:', e);
+          }
+        }
+        localStorage.setItem(lastSyncedKey, Date.now().toString());
+      }
+
+      try {
+        const remoteSessions = await remoteChatAdapter.fetchSessions();
+        const localList = await storageAdapter.listSessions();
+        const localMap = new Map(localList.map(s => [s.id, s]));
+        const remoteMap = new Map(remoteSessions.map(s => [s.id, s]));
+
+        // 1. 서버 세션 로컬 반영/업데이트
+        for (const rs of remoteSessions) {
+          const createdAt = new Date(rs.created_at).getTime();
+          const updatedAt = new Date(rs.updated_at).getTime();
+          if (!localMap.has(rs.id)) {
+            const newLocalSession: ChatSession = {
+              id: rs.id,
+              title: rs.title,
+              status: (rs.status as any) || 'active',
+              messages: [],
+              modelId: rs.model_id || initialModelId,
+              createdAt,
+              updatedAt,
+              sessionSyncStatus: 'synced',
+            };
+            await storageAdapter.saveSession(newLocalSession);
+          } else {
+            const existing = await storageAdapter.loadSession(rs.id);
+            if (existing && (existing.title !== rs.title || existing.updatedAt !== updatedAt)) {
+              existing.title = rs.title;
+              existing.updatedAt = updatedAt;
+              await storageAdapter.saveSession(existing);
+            }
+          }
+        }
+
+        // 2. 서버에서 소프트 삭제된 세션 로컬 정리
+        for (const ls of localList) {
+          if (!remoteMap.has(ls.id)) {
+            const fullLocal = await storageAdapter.loadSession(ls.id);
+            if (fullLocal?.sessionSyncStatus !== 'pending') {
+              await storageAdapter.deleteSession(ls.id);
+            }
+          }
+        }
+
+      } catch (e) {
+        console.warn('[Web refreshSessionList] 원격 세션 목록 로드 실패, 로컬 사용:', e);
+      }
+    }
+
     const list = await storageAdapter.listSessions();
     setSessionList(list);
   };
+
+
+  // online / visibilitychange / authStateChange 이벤트 연동
+  useEffect(() => {
+    const handleOnline = () => {
+      retryPendingSync().then(() => refreshSessionList());
+    };
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        retryPendingSync().then(() => refreshSessionList());
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    const unsubscribeAuth = authAdapter.onAuthStateChange((s) => {
+      setAuthSession(s);
+      if (s?.isAuthenticated) {
+        refreshSessionList().then(() => retryPendingSync());
+      }
+    });
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      unsubscribeAuth();
+    };
+
+  }, []);
 
   // 3. 모델 로드 트리거
   const handleLoadModel = async (overrideModelId?: string) => {
@@ -276,8 +458,6 @@ export default function App() {
     toast.info('모델 로딩이 취소되었습니다.');
   };
 
-
-
   // 4. 새 세션 시작
   const handleNewSession = async (silent: boolean | React.MouseEvent = false) => {
     const isSilent = silent === true;
@@ -294,14 +474,31 @@ export default function App() {
       id: `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       title: '새로운 대화',
       status: 'active',
-      messages: [{ id: 'sys_0', role: 'system', content: systemPrompt, timestamp: Date.now() }],
+      messages: [{ id: 'sys_0', role: 'system', content: systemPrompt, timestamp: Date.now(), syncStatus: 'synced' }],
       modelId: selectedModelId,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      sessionSyncStatus: 'pending',
     };
     
     // 새 세션 시작 시 LLM 대화 컨텍스트 리셋
     llmAdapter.resetConversation?.();
+
+    const authSession = await authAdapter.getSession();
+    if (authSession?.isAuthenticated) {
+      try {
+        await remoteChatAdapter.createSession({
+          id: newSession.id,
+          title: newSession.title,
+          model_id: newSession.modelId,
+          created_at: new Date(newSession.createdAt).toISOString(),
+          updated_at: new Date(newSession.updatedAt).toISOString(),
+        });
+        newSession.sessionSyncStatus = 'synced';
+      } catch (e) {
+        console.warn('[handleNewSession] 원격 세션 생성 실패 (로컬 펜딩):', e);
+      }
+    }
 
     await storageAdapter.saveSession(newSession);
     setCurrentSession(newSession);
@@ -313,30 +510,74 @@ export default function App() {
     }
   };
 
-  // 5. 대화 세션 복원
+  // 5. 대화 세션 복원 (원격 메시지 동기화 포함)
   const handleRestoreSession = async (sessionId: string) => {
     if (chatPhase === 'generating') return;
-    const session = await storageAdapter.loadSession(sessionId);
+    let session = await storageAdapter.loadSession(sessionId);
+    
+    const authSess = await authAdapter.getSession();
+    if (authSess?.isAuthenticated) {
+      if (!session) {
+        const item = sessionList.find(s => s.id === sessionId);
+        session = {
+          id: sessionId,
+          title: item?.title || '대화 세션',
+          status: 'active',
+          messages: [],
+          modelId: item?.modelId || initialModelId,
+          createdAt: item?.createdAt || Date.now(),
+          updatedAt: item?.updatedAt || Date.now(),
+          sessionSyncStatus: 'synced',
+        };
+      }
+      try {
+        const remoteMsgs = await remoteChatAdapter.fetchMessages(sessionId);
+        if (remoteMsgs && remoteMsgs.length > 0) {
+          const restoredMsgs = remoteMsgs.map(rm => ({
+            id: rm.id,
+            role: rm.role as any,
+            content: rm.content,
+            timestamp: new Date(rm.created_at).getTime(),
+            syncStatus: 'synced' as const,
+          }));
+          if (session) {
+            session = { ...session, messages: restoredMsgs, sessionSyncStatus: 'synced' };
+            await storageAdapter.saveSession(session);
+          }
+        }
+      } catch (e) {
+        console.warn('[handleRestoreSession] 원격 메시지 로드 실패 (로컬 사용):', e);
+      }
+    }
+
+
     if (session) {
       setCurrentSession(session);
-      // Validate modelId against registry
       const isValidModel = !!MODEL_REGISTRY[session.modelId];
       const newModelId = isValidModel ? session.modelId : initialModelId;
       if (loadedModelId !== newModelId) {
         setSelectedModelId(newModelId);
       }
-      
-      // 세션 전환 시 LLM 대화 컨텍스트 리셋
       llmAdapter.resetConversation?.();
     }
   };
 
-  // 6. 대화 세션 물리 삭제
+  // 6. 대화 세션 소프트 삭제
   const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (chatPhase === 'generating') return;
     
     await storageAdapter.deleteSession(sessionId);
+
+    const authSess = await authAdapter.getSession();
+    if (authSess?.isAuthenticated) {
+      try {
+        await remoteChatAdapter.deleteSession(sessionId);
+      } catch (err) {
+        console.warn('[handleDeleteSession] 원격 세션 삭제 실패:', err);
+      }
+    }
+
     if (currentSession?.id === sessionId) {
       setCurrentSession(null);
     }
@@ -344,6 +585,7 @@ export default function App() {
     toast.dismiss('session-action');
     toast.success('채팅방이 삭제되었습니다.', { toastId: 'session-action' });
   };
+
 
   // 7. 메시지 전송 및 스트리밍 추론 루프
   const handleSendMessage = async (e?: React.FormEvent) => {
@@ -368,13 +610,29 @@ export default function App() {
 
     if (!currentSession) return;
 
-    const userMsg: ChatMessage = {
+    const userMsg: ChatMessage & { syncStatus?: 'pending' | 'synced' } = {
       id: `msg_${Date.now()}_u`,
       role: 'user',
       content: promptText,
       attachments: sentAttachments,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      syncStatus: 'pending',
     };
+
+    const authSess = await authAdapter.getSession();
+    if (authSess?.isAuthenticated) {
+      try {
+        await remoteChatAdapter.postMessage(currentSession.id, {
+          id: userMsg.id,
+          role: userMsg.role,
+          content: userMsg.content,
+          created_at: new Date(userMsg.timestamp).toISOString(),
+        });
+        userMsg.syncStatus = 'synced';
+      } catch (e) {
+        console.warn('[handleSendMessage] 유저 메시지 원격 전송 실패:', e);
+      }
+    }
 
     const updatedMessages = [...currentSession.messages, userMsg];
     let workingSession: ChatSession = {
@@ -388,7 +646,7 @@ export default function App() {
     const assistantMsgId = `msg_${Date.now()}_a`;
     workingSession = {
       ...workingSession,
-      messages: [...workingSession.messages, { id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now() }]
+      messages: [...workingSession.messages, { id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(), syncStatus: 'pending' }]
     };
     setCurrentSession(workingSession);
 
@@ -449,14 +707,38 @@ export default function App() {
 
       let finalTitle = workingSession.title;
       if (finalTitle === '새로운 대화' && promptText) {
-        finalTitle = promptText.slice(0, 15) + (promptText.length > 15 ? '...' : '');
+        finalTitle = promptText.slice(0, 18) + (promptText.length > 18 ? '...' : '');
+      }
+
+      let assistantSyncStatus: 'pending' | 'synced' = 'pending';
+      if (authSess?.isAuthenticated) {
+        try {
+          if (finalTitle !== workingSession.title) {
+            await remoteChatAdapter.createSession({
+              id: workingSession.id,
+              title: finalTitle,
+              model_id: workingSession.modelId,
+              created_at: new Date(workingSession.createdAt).toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }
+          await remoteChatAdapter.postMessage(workingSession.id, {
+            id: assistantMsgId,
+            role: 'assistant',
+            content: fullResponse,
+            created_at: new Date().toISOString(),
+          });
+          assistantSyncStatus = 'synced';
+        } catch (e) {
+          console.warn('[handleSendMessage] 원격 전송 실패:', e);
+        }
       }
 
       const finalSession: ChatSession = {
         ...workingSession,
         title: finalTitle,
         messages: workingSession.messages.map(m => 
-          m.id === assistantMsgId ? { ...m, content: fullResponse } : m
+          m.id === assistantMsgId ? { ...m, content: fullResponse, syncStatus: assistantSyncStatus } : m
         ),
         updatedAt: Date.now()
       };
@@ -465,6 +747,8 @@ export default function App() {
       await storageAdapter.saveSession(finalSession);
       await refreshSessionList();
       setChatPhase('idle');
+
+
 
     } catch (err: any) {
       console.error(err);

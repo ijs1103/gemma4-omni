@@ -23,6 +23,7 @@ const PLATFORM: ClientPlatform = Platform.OS === 'ios' ? 'ios' : 'android';
 const KC_REFRESH = 'auth_refresh_token';
 const KC_ACCESS = 'auth_access_token';
 const KC_USER = 'auth_user';
+const KC_EXPIRES = 'auth_expires_at';
 
 // ── 내부 타입 ──────────────────────────────────────────────────────
 interface BackendUser {
@@ -63,10 +64,24 @@ function parseCallbackUrl(url: string): Record<string, string> {
 // ── MobileAuthAdapter ─────────────────────────────────────────────
 export class MobileAuthAdapter implements AuthAdapter {
   readonly platform: ClientPlatform = PLATFORM;
+  private callbacks: Set<(session: AuthSession | null) => void> = new Set();
+  private currentSession: AuthSession | null = null;
+  private accessToken: string | null = null;
+  private refreshPromise: Promise<AuthTokens | null> | null = null;
+
+  private notifyAuthChange(session: AuthSession | null): void {
+    this.currentSession = session;
+    this.callbacks.forEach((cb) => {
+      try {
+        cb(session);
+      } catch (e) {
+        console.error('[MobileAuthAdapter] callback error:', e);
+      }
+    });
+  }
 
   /**
-   * 소셜 로그인 시작 — AuthAdapter 인터페이스 구현 (void 반환).
-   * 내부적으로 startLoginAndGetSession()을 호출합니다.
+   * AuthAdapter 인터페이스 구현.
    * AuthContext에서는 startLoginAndGetSession()을 직접 사용하세요.
    */
   async startLogin(provider: SocialProvider): Promise<void> {
@@ -178,14 +193,13 @@ export class MobileAuthAdapter implements AuthAdapter {
     const { code, state, error, error_description } = params;
 
     if (error) {
-      throw new Error(`[Auth] OAuth 오류: ${error} — ${error_description ?? ''}`);
+      throw new Error(`[Auth] OAuth 에러: ${error} - ${error_description ?? ''}`);
     }
     if (!code) {
-      throw new Error(`[Auth] 콜백 URL에 code가 없습니다: ${callbackUrl}`);
+      throw new Error('[Auth] 콜백 URL에 authorization code가 없습니다.');
     }
 
-    // ── 4. 백엔드 콜백 처리 & 저장 ────────────────────────────────
-    console.log(`[MobileAuth] 7. handleCallback 호출 시작`);
+    // ── 4. 백엔드 /callback 호출 및 세션 확립 ─────────────────────
     return this.handleCallback(provider, {
       code,
       state: state ?? '',
@@ -194,7 +208,7 @@ export class MobileAuthAdapter implements AuthAdapter {
   }
 
   /**
-   * 백엔드 /callback 호출 → 토큰 발급 → Keychain 저장 → AuthSession 반환.
+   * OAuth 인가 코드로 백엔드에 세션을 요청하고 토큰을 저장합니다.
    */
   async handleCallback(
     provider: SocialProvider,
@@ -217,36 +231,70 @@ export class MobileAuthAdapter implements AuthAdapter {
     }
 
     const data: BackendSessionResponse = await res.json();
+    const expiresAt = Date.now() + data.expires_in * 1000;
 
-    // Keychain에 토큰 + 사용자 정보 저장
+    // Keychain에 토큰 + 사용자 정보 + 만료시간 저장
     await Promise.all([
       Keychain.setGenericPassword('refresh_token', data.refresh_token, { service: KC_REFRESH }),
       Keychain.setGenericPassword('access_token', data.access_token, { service: KC_ACCESS }),
       Keychain.setGenericPassword('user', JSON.stringify(data.user), { service: KC_USER }),
+      Keychain.setGenericPassword('expires_at', expiresAt.toString(), { service: KC_EXPIRES }),
     ]);
 
-    return this._toAuthSession(data);
+    this.accessToken = data.access_token;
+    const session = this._toAuthSession(data);
+    this.notifyAuthChange(session);
+    return session;
   }
 
   /**
    * Keychain에서 저장된 세션을 복원합니다.
-   * Refresh Token으로 Access Token을 갱신합니다.
+   * 이미 유효한 세션이 있으면 네트워크 요청 없이 즉시 반환합니다.
    */
   async getSession(): Promise<AuthSession | null> {
+    if (this.currentSession && this.currentSession.expiresAt > Date.now()) {
+      return this.currentSession;
+    }
+
     try {
-      const [refreshCreds, userCreds] = await Promise.all([
+      const [refreshCreds, userCreds, accessCreds, expiresCreds] = await Promise.all([
         Keychain.getGenericPassword({ service: KC_REFRESH }),
         Keychain.getGenericPassword({ service: KC_USER }),
+        Keychain.getGenericPassword({ service: KC_ACCESS }),
+        Keychain.getGenericPassword({ service: KC_EXPIRES }),
       ]);
 
-      if (!refreshCreds || !userCreds) return null;
+      if (!refreshCreds || !userCreds) {
+        this.currentSession = null;
+        this.accessToken = null;
+        return null;
+      }
 
-      // Access Token 갱신 시도
+      const user: BackendUser = JSON.parse(userCreds.password);
+      const expiresAt = expiresCreds ? parseInt(expiresCreds.password, 10) : 0;
+
+      // 만료되지 않은 경우 로컬 캐시 세션 복원
+      if (expiresAt > Date.now() && accessCreds) {
+        this.accessToken = accessCreds.password;
+        this.currentSession = {
+          user: {
+            id: user.id,
+            email: user.email ?? null,
+            displayName: user.display_name ?? null,
+            profileImageUrl: user.profile_image_url ?? null,
+            linkedProviders: user.linked_providers,
+          },
+          isAuthenticated: true,
+          expiresAt,
+        };
+        return this.currentSession;
+      }
+
+      // 만료된 경우 단일-플라이트 토큰 갱신 시도
       const tokens = await this.refresh();
       if (!tokens) return null;
 
-      const user: BackendUser = JSON.parse(userCreds.password);
-      return {
+      this.currentSession = {
         user: {
           id: user.id,
           email: user.email ?? null,
@@ -257,6 +305,7 @@ export class MobileAuthAdapter implements AuthAdapter {
         isAuthenticated: true,
         expiresAt: Date.now() + tokens.expiresIn * 1000,
       };
+      return this.currentSession;
     } catch (e) {
       console.warn('[MobileAuthAdapter] getSession 오류:', e);
       return null;
@@ -265,8 +314,19 @@ export class MobileAuthAdapter implements AuthAdapter {
 
   /**
    * Refresh Token으로 새 Access Token을 발급받습니다.
+   * 동시 호출 시 중복 요청을 방지하기 위해 단일 Promise를 공유합니다.
    */
   async refresh(): Promise<AuthTokens | null> {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+    this.refreshPromise = this._doRefresh().finally(() => {
+      this.refreshPromise = null;
+    });
+    return this.refreshPromise;
+  }
+
+  private async _doRefresh(): Promise<AuthTokens | null> {
     try {
       const credentials = await Keychain.getGenericPassword({ service: KC_REFRESH });
       if (!credentials) return null;
@@ -278,12 +338,23 @@ export class MobileAuthAdapter implements AuthAdapter {
       });
 
       if (!res.ok) {
-        console.warn('[MobileAuthAdapter] refresh 실패 → 로그아웃 처리:', res.status);
-        await this.logout();
+        if (res.status === 401 || res.status === 403) {
+          console.warn('[MobileAuthAdapter] refresh 인증 거부 (401/403) → 로그아웃 처리');
+          await this.logout();
+        }
         return null;
       }
 
       const data = await res.json();
+      const expiresAt = Date.now() + data.expires_in * 1000;
+
+      this.accessToken = data.access_token;
+      if (this.currentSession) {
+        this.currentSession = {
+          ...this.currentSession,
+          expiresAt,
+        };
+      }
 
       await Promise.all([
         Keychain.setGenericPassword('access_token', data.access_token, { service: KC_ACCESS }),
@@ -307,26 +378,45 @@ export class MobileAuthAdapter implements AuthAdapter {
    * 저장된 Access Token을 반환합니다 (API 요청 Authorization 헤더용).
    */
   async getAccessToken(): Promise<string | null> {
+    if (this.accessToken && this.currentSession && this.currentSession.expiresAt > Date.now()) {
+      return this.accessToken;
+    }
+
     try {
-      const creds = await Keychain.getGenericPassword({ service: KC_ACCESS });
-      return creds ? creds.password : null;
+      const [accessCreds, expiresCreds] = await Promise.all([
+        Keychain.getGenericPassword({ service: KC_ACCESS }),
+        Keychain.getGenericPassword({ service: KC_EXPIRES }),
+      ]);
+      const expiresAt = expiresCreds ? parseInt(expiresCreds.password, 10) : 0;
+      if (accessCreds && expiresAt > Date.now()) {
+        this.accessToken = accessCreds.password;
+        return this.accessToken;
+      }
+
+      const tokens = await this.refresh();
+      return tokens ? tokens.accessToken : null;
     } catch {
       return null;
     }
   }
 
   async logout(): Promise<void> {
+    this.accessToken = null;
+    this.currentSession = null;
     await Promise.allSettled([
       Keychain.resetGenericPassword({ service: KC_REFRESH }),
       Keychain.resetGenericPassword({ service: KC_ACCESS }),
       Keychain.resetGenericPassword({ service: KC_USER }),
+      Keychain.resetGenericPassword({ service: KC_EXPIRES }),
     ]);
     try {
       await InAppBrowser.closeAuth();
     } catch {
       // 닫을 브라우저 없을 수 있음 — 무시
     }
+    this.notifyAuthChange(null);
   }
+
 
   async deleteAccount(): Promise<void> {
     try {
@@ -345,8 +435,12 @@ export class MobileAuthAdapter implements AuthAdapter {
     }
   }
 
-  onAuthStateChange(_callback: (session: AuthSession | null) => void): () => void {
-    return () => { };
+  onAuthStateChange(callback: (session: AuthSession | null) => void): () => void {
+    this.callbacks.add(callback);
+    callback(this.currentSession);
+    return () => {
+      this.callbacks.delete(callback);
+    };
   }
 
   // ── 네이티브 SDK 로그인 헬퍼 ─────────────────────────────────────
@@ -390,8 +484,11 @@ export class MobileAuthAdapter implements AuthAdapter {
     ]);
 
     console.log(`[MobileAuth] ${provider} 세션 생성 완료`);
-    return this._toAuthSession(data);
+    const session = this._toAuthSession(data);
+    this.notifyAuthChange(session);
+    return session;
   }
+
 
   // ── 내부 헬퍼 ───────────────────────────────────────────────────
   private _toAuthSession(data: BackendSessionResponse): AuthSession {
