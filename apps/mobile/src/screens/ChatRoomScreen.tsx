@@ -29,7 +29,7 @@ import { MODEL_CATALOG, ModelId, ModelDownloadState } from '../types/models';
 import Markdown from 'react-native-markdown-display';
 import { preprocessMarkdown } from '../utils/markdown';
 import Clipboard from '@react-native-clipboard/clipboard';
-import { Copy, Menu, Sparkles, Plus, Square } from 'lucide-react-native';
+import { Copy, Menu, Sparkles, Plus, Square, Globe } from 'lucide-react-native';
 import BottomSheet from '@gorhom/bottom-sheet';
 import { ChatHeader } from '../components/ChatHeader';
 import { ChatBottomSheet } from '../components/ChatBottomSheet';
@@ -39,6 +39,7 @@ import { useChat } from '../context/ChatContext';
 import { authAdapter } from '../context/AuthContext';
 import { MobileRemoteChatAdapter } from '../adapters/MobileRemoteChatAdapter';
 import { useTheme } from '@react-navigation/native';
+import { buildMobileWebSearchPrompt } from '@repo/prompt-kit';
 
 // 싱글톤 어댑터 — 전역 어댑터 싱글톤(getLiteRTAdapter)으로 통합
 let _storage: MobileStorageAdapter | null = null;
@@ -213,6 +214,11 @@ export default function ChatRoomScreen({ route, navigation }: any) {
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const [hasKeyboardOpened, setHasKeyboardOpened] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  // 웹 검색(SearXNG RAG) 토글 상태
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  // 웹 검색 실패 시 일시적 경고 표시 상태
+  const [isSearchFailing, setIsSearchFailing] = useState(false);
+
 
   const flatListRef = useRef<FlatList>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -792,7 +798,33 @@ export default function ChatRoomScreen({ route, navigation }: any) {
 
       // 4. 모델 준비 대기 후 스트리밍
       await getModelAdapter().waitForReady(modelId);
-      const responseStream = getModelAdapter().stream(updatedMessagesWithUser);
+
+      // ── 웹 검색 활성화 시 RAG 파이프라인 (모바일) ─────────────────────────
+      let messagesForStream = updatedMessagesWithUser;
+      const hasImageAttachment = pendingAttachments?.some((a) => a.type === 'image') ?? false;
+
+      // 이미지가 첨부되어 있을 때는 모호한 텍스트 검색을 건너뛰고 이미지 시각 분석을 우선함
+      if (webSearchEnabled && remoteAdapter.searchWeb && !hasImageAttachment) {
+        try {
+          const snippets = await remoteAdapter.searchWeb(inputText.trim());
+          if (snippets && snippets.length > 0) {
+            // buildMobileWebSearchPrompt로 마지막 user 메시지 콘텐츠를 래핑
+            messagesForStream = updatedMessagesWithUser.map((msg, idx) => {
+              if (idx === updatedMessagesWithUser.length - 1 && msg.role === 'user') {
+                return { ...msg, content: buildMobileWebSearchPrompt(snippets, msg.content) };
+              }
+              return msg;
+            });
+          }
+        } catch (searchErr) {
+          console.warn('[ChatRoom] 웹 검색 실패, 일반 대화로 계속:', searchErr);
+          setIsSearchFailing(true);
+          setTimeout(() => setIsSearchFailing(false), 2500);
+        }
+      }
+
+      const responseStream = getModelAdapter().stream(messagesForStream);
+
 
       let accumulatedText = '';
       for await (const chunk of responseStream) {
@@ -1125,6 +1157,27 @@ export default function ChatRoomScreen({ route, navigation }: any) {
               </ScrollView>
             )}
 
+            {/* 웹 검색 활성화 알림 배너 */}
+            {webSearchEnabled && (
+              <View style={styles.webSearchBanner}>
+                <View style={styles.webSearchBannerLeft}>
+                  <View style={styles.webSearchPulseDot} />
+                  <Globe size={13} color="#1a73e8" />
+                  <Text style={styles.webSearchBannerText}>
+                    {pendingAttachments.some((a) => a.type === 'image')
+                      ? '🖼️ 이미지 분석 모드 우선 적용됨'
+                      : '최신 웹 정보를 검색하여 답변에 반영합니다'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setWebSearchEnabled(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.webSearchBannerClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* [전략 A 추가] isSettling 상태를 disabled 스타일/조건에도 함께 반영 */}
             <View style={[styles.floatingPill, (isGenerating || isSettling) && styles.disabledFloatingPill]}>
               <TouchableOpacity 
@@ -1133,6 +1186,30 @@ export default function ChatRoomScreen({ route, navigation }: any) {
                 disabled={isGenerating || isSettling}
               >
                 <Plus size={24} color="#5f6368" />
+              </TouchableOpacity>
+
+              {/* 웹 검색 토글 버튼 */}
+              <TouchableOpacity
+                style={[
+                  styles.searchToggleButton,
+                  webSearchEnabled && styles.searchToggleButtonActive,
+                ]}
+                onPress={() => setWebSearchEnabled((prev) => !prev)}
+                disabled={isGenerating || isSettling}
+              >
+                <Globe
+                  size={18}
+                  color={
+                    isSearchFailing
+                      ? '#f59e0b'
+                      : webSearchEnabled
+                        ? '#1a73e8'
+                        : '#5f6368'
+                  }
+                />
+                {webSearchEnabled && (
+                  <Text style={styles.searchToggleActiveText}>검색 ON</Text>
+                )}
               </TouchableOpacity>
               
               <TextInput
@@ -1508,6 +1585,65 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  searchToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 36,
+    paddingHorizontal: 8,
+    borderRadius: 18,
+    backgroundColor: '#f1f3f4',
+    marginRight: 4,
+  },
+  searchToggleButtonActive: {
+    backgroundColor: '#e8f0fe',
+    borderWidth: 1.5,
+    borderColor: '#1a73e8',
+    paddingHorizontal: 10,
+  },
+  searchToggleActiveText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1a73e8',
+    marginLeft: 4,
+  },
+  webSearchBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#e8f0fe',
+    borderWidth: 1,
+    borderColor: '#d2e3fc',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginBottom: 8,
+    width: '100%',
+  },
+  webSearchBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  webSearchPulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#1a73e8',
+  },
+  webSearchBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1a73e8',
+  },
+  webSearchBannerClose: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#5f6368',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   pillInput: {
     flex: 1,

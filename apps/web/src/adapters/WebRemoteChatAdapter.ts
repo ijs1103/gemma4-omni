@@ -6,14 +6,22 @@ import type {
   CreateMessageRequest,
   SyncSessionPayload,
   SyncPushResponse,
+  SearchSnippet,
 } from '@repo/chat-state';
 import type { WebAuthAdapter } from './WebAuthAdapter';
 
 const API_URL = import.meta.env.VITE_CHAT_API_URL
   || 'http://localhost:8000/api/v1/chats';
 
+// /api/v1 베이스 URL (chats 경로 제거)
+const API_BASE_URL = API_URL.replace(/\/chats$/, '');
+
 export class WebRemoteChatAdapter implements RemoteChatClient {
-  constructor(private authAdapter: WebAuthAdapter) {}
+  private authAdapter: WebAuthAdapter;
+
+  constructor(authAdapter: WebAuthAdapter) {
+    this.authAdapter = authAdapter;
+  }
 
   private async fetchWithAuth(path: string, options?: RequestInit, isRetry = false): Promise<Response> {
     let token = this.authAdapter.getAccessToken();
@@ -84,5 +92,42 @@ export class WebRemoteChatAdapter implements RemoteChatClient {
       body: JSON.stringify({ sessions }),
     });
     return res.json();
+  }
+
+  async searchWeb(query: string, maxResults = 5): Promise<SearchSnippet[]> {
+    const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&max_results=${maxResults}`;
+
+    let token = this.authAdapter.getAccessToken();
+    if (!token) {
+      const refreshed = await this.authAdapter.refresh();
+      token = refreshed?.accessToken || null;
+    }
+    if (!token) throw new Error('Not authenticated');
+
+    const res = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (res.status === 401) {
+      const refreshed = await this.authAdapter.refresh();
+      if (refreshed?.accessToken) {
+        const retryRes = await fetch(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${refreshed.accessToken}`,
+          },
+        });
+        if (!retryRes.ok) throw new Error(`Search API retry error ${retryRes.status}`);
+        const retryData = await retryRes.json();
+        return retryData.snippets || [];
+      }
+    }
+
+    if (!res.ok) throw new Error(`Search API error ${res.status}`);
+    const data = await res.json();
+    return data.snippets || [];
   }
 }

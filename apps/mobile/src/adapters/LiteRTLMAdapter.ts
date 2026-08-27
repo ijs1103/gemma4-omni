@@ -39,13 +39,8 @@ import type {
 } from '@repo/ai-core';
 
 // ─── In-Context RAG: 문서 컨텍스트 빌더 (prompt-kit 인라인) ──────────────────
-//
-// @repo/prompt-kit 패키지의 buildContextFromMessages 로직을 인라인으로 포함.
-// 모바일 tsconfig(bundler moduleResolution + resolvePackageJsonImports: false) 환경에서
-// workspace 패키지의 dist/ 참조가 불안정하여 직접 포함한다.
-// 원본: packages/prompt-kit/src/document-context.ts
-
-const CHARS_PER_TOKEN = 3.0;
+// 한국어 및 PDF 특수문자는 1자당 약 0.8~1.2 토큰을 차지하므로 보수적인 1.3을 적용
+const CHARS_PER_TOKEN = 1.3;
 // 현재 사용 중인 gemma-4-e4b-it.litertlm 모델은 4096 토큰(Max Seq Len)으로 빌드되어 있습니다.
 // 향후 32K를 지원하는 모델로 교체할 경우 이 값을 32768로 변경하면 됩니다.
 const MAX_CONTEXT_TOKENS = 4096;

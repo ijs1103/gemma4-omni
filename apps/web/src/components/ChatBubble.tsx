@@ -123,6 +123,19 @@ export const ChatBubble: React.FC<ChatBubbleProps> = React.memo(({
                           {children}
                         </code>
                       );
+                    },
+                    a({ node, href, children, ...props }: any) {
+                      return (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ai-source-link text-blue-500 hover:text-blue-600 underline font-medium"
+                          {...props}
+                        >
+                          {children}
+                        </a>
+                      );
                     }
                   }}
                 >

@@ -27,3 +27,9 @@ async def test_get_me_unauthorized(client: AsyncClient):
 async def test_logout_without_token(client: AsyncClient):
     response = await client.post("/api/v1/auth/logout")
     assert response.status_code == 401
+
+@pytest.mark.asyncio
+async def test_refresh_empty_body_no_token(client: AsyncClient):
+    """리프레시 토큰 없이 빈 body만 보냈을 때 422가 아니라 401을 반환하는지 검증."""
+    response = await client.post("/api/v1/auth/refresh", json={})
+    assert response.status_code == 401

@@ -12,6 +12,7 @@ import {
 import { 
   type AuthSession
 } from '@repo/auth-shared';
+import { buildWebSearchContext } from '@repo/prompt-kit';
 
 import { LiteRTLMAdapter } from './adapters/LiteRTLMAdapter';
 import { WebStorageAdapter } from './adapters/WebStorageAdapter';
@@ -97,6 +98,9 @@ export default function App() {
 
   // 소셜 로그인 화면 상태
   const [isLoginScreenOpen, setIsLoginScreenOpen] = useState(false);
+
+  // 웹 검색(SearXNG RAG) 토글 상태
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
 
   // 첨부파일 훅
   const {
@@ -656,7 +660,40 @@ export default function App() {
     const startTime = performance.now();
 
     try {
-      const chunks = llmAdapter.stream(updatedMessages, {
+      // ── 웹 검색 활성화 시 RAG 파이프라인 ──────────────────────────────
+      let messagesForLLM = updatedMessages;
+      const hasImageAttachment = sentAttachments?.some((a) => a.type === 'image') ?? false;
+
+      // 이미지가 첨부되어 있을 때는 모호한 텍스트 검색을 건너뛰고 이미지 시각 분석을 우선함
+      if (webSearchEnabled && !hasImageAttachment) {
+        try {
+          const snippets = await remoteChatAdapter.searchWeb(promptText);
+          if (snippets && snippets.length > 0) {
+            const { systemPrompt: searchAugmentedPrompt } = buildWebSearchContext(
+              snippets,
+              systemPrompt,
+            );
+            // 검색 활성화 시 히스토리를 최근 2턴(최대 4개)으로 절삭하여 토큰 예산 보호
+            const nonSystemMessages = updatedMessages.filter((m) => m.role !== 'system');
+            const recentTurns = nonSystemMessages.slice(-4);
+            messagesForLLM = [
+              { id: 'sys_0', role: 'system' as const, content: searchAugmentedPrompt, timestamp: 0 },
+              ...recentTurns,
+            ];
+          } else {
+            // 2개 활성 엔진 모두 결과가 없는 경우
+            toast.dismiss('search-fallback');
+            toast.info('🔍 검색 결과가 없어 기본 AI 지식으로 답변합니다.', { toastId: 'search-fallback' });
+          }
+        } catch (searchErr) {
+          // 검색 서버 미구동/503/타임아웃 시 graceful fallback
+          console.warn('[handleSendMessage] 웹 검색 실패, 기본 AI로 진행:', searchErr);
+          toast.dismiss('search-fallback');
+          toast.info('🔍 웹 검색에 실패했습니다. 기본 AI 지식으로 답변합니다.', { toastId: 'search-fallback' });
+        }
+      }
+
+      const chunks = llmAdapter.stream(messagesForLLM, {
         temperature: 0.7,
         signal: abortControllerRef.current.signal
       });
@@ -1370,6 +1407,34 @@ export default function App() {
                     attachments={pendingAttachments}
                     onRemove={removeAttachment}
                   />
+
+                  {/* 웹 검색 활성화 알림 배너 */}
+                  {webSearchEnabled && (
+                    <div className="web-search-active-banner">
+                      <div className="web-search-banner-content">
+                        <span className="web-search-banner-pulse"></span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <line x1="2" y1="12" x2="22" y2="12"></line>
+                          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                        {pendingAttachments.some((a) => a.type === 'image') ? (
+                          <span className="web-search-banner-title">🖼️ 이미지 첨부 중에는 이미지 시각 분석이 우선 적용됩니다</span>
+                        ) : (
+                          <span className="web-search-banner-title">최신 웹 정보를 검색하여 답변에 반영합니다</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="web-search-banner-close"
+                        title="웹 검색 끄기"
+                        onClick={() => setWebSearchEnabled(false)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
+
                   <div className="capsule-input-box">
                     <textarea
                       ref={textareaRef}
@@ -1439,6 +1504,23 @@ export default function App() {
                           </div>
                         )}
                       </div>
+
+                      {/* 웹 검색 토글 버튼 */}
+                      <button
+                        type="button"
+                        className={`search-toggle-btn${webSearchEnabled ? ' active' : ''}`}
+                        title={webSearchEnabled ? '웹 검색 활성화됨 (클릭하여 끄기)' : '웹 검색 비활성화됨 (클릭하여 켜기)'}
+                        onClick={() => setWebSearchEnabled((prev) => !prev)}
+                        disabled={chatPhase === 'model-loading' || !loadedModelId}
+                        aria-pressed={webSearchEnabled}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="search-btn-icon">
+                          <circle cx="11" cy="11" r="8"></circle>
+                          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <span className="search-toggle-label">웹 검색</span>
+                        {webSearchEnabled && <span className="search-active-pill">ON</span>}
+                      </button>
 
                       {/* Hidden file inputs */}
                       <input

@@ -76,6 +76,15 @@ export type MessageSyncStatus = 'pending' | 'synced';
  */
 export type SessionSyncStatus = 'pending' | 'synced';
 
+// ── 검색 타입 ───────────────────────────────────────────
+
+/** 웹 검색 스니펫 (서버 응답) */
+export interface SearchSnippet {
+  title: string;
+  content: string;
+  url: string;
+}
+
 // ── 인터페이스 ──────────────────────────────────────────
 
 /**
@@ -105,4 +114,7 @@ export interface RemoteChatClient {
 
   /** 전체 멱등 동기화 푸시 (삭제 세션 skip, 다른 세션 소속 메시지 skip) */
   syncPush(sessions: SyncSessionPayload[]): Promise<SyncPushResponse>;
+
+  /** 웹 검색 수행 (SearXNG 프록시) */
+  searchWeb?(query: string, maxResults?: number): Promise<SearchSnippet[]>;
 }

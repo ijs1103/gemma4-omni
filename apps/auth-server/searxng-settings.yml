@@ -1,0 +1,26 @@
+# SearXNG 설정 파일
+# use_default_settings 아래 engines.keep_only를 사용하여
+# 실측 100% 성공률로 입증된 2개 핵심 엔진(DDG, Bing)만 활성화합니다.
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - bing
+
+# ★ 필수 오버라이드 근거:
+# SearXNG 기본 설정(searx/settings.yml)에서 bing은 disabled: true로 선언되어 있습니다.
+# keep_only로 엔진을 필터링하더라도 기본 disabled 속성이 유지되므로,
+# 아래와 같이 disabled: false로 명시적 오버라이드해야 categories=general에서 정상 쿼리됩니다.
+engines:
+  - name: bing
+    disabled: false
+
+server:
+  secret_key: "overridden-by-env-SEARXNG_SECRET"
+  bind_address: "0.0.0.0"
+  limiter: false
+
+search:
+  formats:
+    - json
+    - html

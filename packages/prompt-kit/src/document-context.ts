@@ -30,45 +30,41 @@ import type { Attachment, ChatMessage } from '@repo/ai-core';
 // ─── 상수 정의 ─────────────────────────────────────────────────────────────────
 
 /**
- * Gemma 4 E4B 모델의 총 컨텍스트 윈도우 크기 (토큰 단위).
- * 레지스트리의 contextWindow: 32768과 일치한다.
+ * 현재 배포된 Gemma 4 E4B 모델의 총 컨텍스트 윈도우 크기 (토큰 단위).
+ * WebGPU / 모바일 런타임 기준 4,096 토큰입니다.
  */
-const MODEL_CONTEXT_WINDOW_TOKENS = 32_768;
+const MODEL_CONTEXT_WINDOW_TOKENS = 4_096;
 
 /**
- * 한국어/영어 혼합 텍스트에서의 보수적 글자→토큰 변환 비율.
+ * 한국어/영어 혼합 텍스트 및 PDF 특수문자에서의 보수적 글자→토큰 변환 비율.
  *
  * - 영어 전용: ~4 chars/token
- * - 한국어 전용: ~2.5 chars/token (유니코드 범위가 넓어 서브워드 분할이 잦음)
- * - 혼합(실무): ~3.2 chars/token
+ * - 한국어/PDF 특수문자: ~1.0 ~ 1.3 chars/token
  *
- * 안전 마진을 위해 3.0을 사용한다. 이 값이 작을수록 보수적(더 적게 허용)이다.
+ * 토큰 초과 에러 방지를 위해 보수적인 1.3을 사용합니다.
  */
-const CHARS_PER_TOKEN = 3.0;
+const CHARS_PER_TOKEN = 1.3;
 
 /**
  * 시스템 프롬프트 + 대화 히스토리에 예약되는 토큰 수.
- * 시스템 프롬프트(~200 토큰) + 직전 대화 턴 2~3개(~1,000 토큰) +
- * 사용자 현재 질문(~200 토큰) = 약 1,400 토큰. 넉넉히 2,000 토큰 예약.
  */
-const RESERVED_PROMPT_TOKENS = 2_000;
+const RESERVED_PROMPT_TOKENS = 512;
 
 /**
  * 모델이 응답을 생성할 수 있도록 예약하는 토큰 수.
- * 긴 요약/분석 답변을 위해 4,096 토큰을 확보한다.
  */
-const RESERVED_GENERATION_TOKENS = 4_096;
+const RESERVED_GENERATION_TOKENS = 1_024;
 
 /**
  * 문서 컨텍스트에 할당 가능한 최대 토큰 수.
- * = 전체 윈도우 - 프롬프트 예약 - 생성 예약
+ * = 전체 윈도우(4096) - 프롬프트 예약(512) - 생성 예약(1024) = 2560 토큰
  */
 const MAX_DOCUMENT_TOKENS =
   MODEL_CONTEXT_WINDOW_TOKENS - RESERVED_PROMPT_TOKENS - RESERVED_GENERATION_TOKENS;
 
 /**
  * 문서 컨텍스트에 할당 가능한 최대 글자 수.
- * 토큰 수 × 글자/토큰 비율로 변환한다.
+ * 토큰 수 × 글자/토큰 비율로 변환한다 (약 3,328자).
  */
 const MAX_DOCUMENT_CHARS = Math.floor(MAX_DOCUMENT_TOKENS * CHARS_PER_TOKEN);
 

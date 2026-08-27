@@ -63,5 +63,10 @@ class Settings(BaseSettings):
     KAKAO_CLIENT_ID: str = ""
     KAKAO_CLIENT_SECRET: str = ""
 
+    # ── SearXNG ──────────────────────────────────────────────────
+    SEARXNG_URL: str = "http://localhost:8080/search"
+    SEARXNG_TIMEOUT: float = 5.0
+    SEARCH_RATE_LIMIT_PER_MINUTE: int = 10
+
 
 settings = Settings()

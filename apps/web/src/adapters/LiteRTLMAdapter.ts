@@ -26,7 +26,8 @@ async function fetchBlobAsBase64(uri: string): Promise<string> {
 }
 
 // ─── In-Context RAG: 문서 컨텍스트 빌더 ─────────────────────────────
-const CHARS_PER_TOKEN = 3.0;
+// 한국어 및 PDF 특수문자는 1자당 약 0.8~1.2 토큰을 차지하므로 보수적인 1.3을 적용
+const CHARS_PER_TOKEN = 1.3;
 const MAX_CONTEXT_TOKENS = 4096;
 const RESERVED_OUTPUT_TOKENS = 1024;
 const RESERVED_CHAT_TOKENS = 512;
@@ -117,7 +118,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
       const engineSettings: EngineSettings = {
         model: modelUrl,
         mainExecutorSettings: {
-          maxNumTokens: 2048,
+          maxNumTokens: 4096,
         },
       };
 
@@ -137,27 +138,22 @@ export class LiteRTLMAdapter implements LLMAdapter {
     }
   }
 
-  private async getOrCreateConversation(messages: ChatMessage[] = []): Promise<Conversation> {
+  private async createConversationForTurn(messages: ChatMessage[] = []): Promise<Conversation> {
     if (!this.engine) {
       throw new Error('LLMEngine is not initialized. Call init() first.');
     }
-    
-    // If we already have a conversation, return it (for continuous chat)
-    if (this.conversation) {
-      return this.conversation;
-    }
 
-    // 시스템 프롬프트 추출
-    const systemMsg = messages.find(m => m.role === 'system');
+    // 시스템 프롬프트 추출 (RAG 웹 검색 결과 또는 최신 시스템 프롬프트 반영)
+    const systemMsg = messages.find((m) => m.role === 'system');
     const systemContent = systemMsg ? systemMsg.content : 'You are a helpful assistant.';
 
     // 이전 대화 기록 추출 (마지막 유저 메시지는 제외)
     const history = messages
-      .filter(m => m.role !== 'system')
+      .filter((m) => m.role !== 'system')
       .slice(0, -1) // 마지막 메시지(현재 질문) 제외
-      .map(m => ({
+      .map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
-        content: m.content
+        content: m.content,
       }));
 
     this.conversation = await this.engine.createConversation({
@@ -181,7 +177,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
 
   async *stream(messages: ChatMessage[], options?: GenerateOptions): AsyncIterable<StreamChunk> {
     try {
-      const chat = await this.getOrCreateConversation(messages);
+      const chat = await this.createConversationForTurn(messages);
       
       this.abortController = new AbortController();
 

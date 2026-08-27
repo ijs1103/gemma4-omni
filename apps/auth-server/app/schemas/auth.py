@@ -86,12 +86,13 @@ class RefreshRequest(BaseModel):
     """액세스 토큰 갱신 요청.
 
     기존 리프레시 토큰을 제출하여 새로운 액세스 토큰을 발급받는다.
+    모바일은 JSON 바디로 전달하며, 웹은 HttpOnly 쿠키로 전달하므로 선택적이다.
     """
 
     model_config = {"extra": "forbid"}
 
-    refresh_token: str
-    """현재 유효한 리프레시 토큰."""
+    refresh_token: Optional[str] = None
+    """현재 유효한 리프레시 토큰 (모바일용)."""
 
 
 # ──────────────────────────────────────────────

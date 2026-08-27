@@ -1043,6 +1043,187 @@ html.dark .action-icon-btn.send:disabled {
 }
 
 /* ═══════════════════════════════════════════════════
+   Web Search (RAG) Toggle Button & Active Banner
+   ═══════════════════════════════════════════════════ */
+.search-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 38px;
+  border-radius: 19px;
+  border: 1.5px solid #dadce0;
+  background: #f8f9fa;
+  color: #5f6368;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  flex-shrink: 0;
+}
+.search-toggle-btn:hover {
+  background: #f1f3f4;
+  border-color: #bdc1c6;
+  color: #202124;
+}
+.search-toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Web Search Button Active State */
+.search-toggle-btn.active {
+  background: #e8f0fe;
+  border-color: #1a73e8;
+  color: #1a73e8;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(26, 115, 232, 0.25);
+}
+.search-toggle-btn.active:hover {
+  background: #d2e3fc;
+  border-color: #185abc;
+}
+.search-toggle-btn .search-btn-icon {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+.search-toggle-btn.active .search-btn-icon {
+  transform: scale(1.08);
+}
+.search-toggle-btn .search-active-pill {
+  font-size: 10px;
+  font-weight: 700;
+  background: #1a73e8;
+  color: #ffffff;
+  padding: 1px 6px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  margin-left: 2px;
+}
+
+/* Dark Mode Search Toggle Button */
+html.dark .search-toggle-btn {
+  background: #282a2c;
+  border-color: #3c4043;
+  color: #9aa0a6;
+}
+html.dark .search-toggle-btn:hover {
+  background: #35373a;
+  border-color: #5f6368;
+  color: #e8eaed;
+}
+html.dark .search-toggle-btn.active {
+  background: rgba(66, 133, 244, 0.22);
+  border-color: #8ab4f8;
+  color: #8ab4f8;
+  box-shadow: 0 1px 6px rgba(138, 180, 248, 0.3);
+}
+html.dark .search-toggle-btn.active:hover {
+  background: rgba(66, 133, 244, 0.32);
+  border-color: #aecbfa;
+}
+html.dark .search-toggle-btn .search-active-pill {
+  background: #8ab4f8;
+  color: #1e1f20;
+}
+
+/* Active Search Banner Above Input */
+.web-search-active-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #e8f0fe;
+  border: 1px solid #d2e3fc;
+  color: #174ea6;
+  border-radius: 14px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  animation: searchBannerFadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes searchBannerFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.web-search-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.web-search-banner-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #1a73e8;
+  box-shadow: 0 0 6px rgba(26, 115, 232, 0.8);
+  animation: searchPulse 1.8s infinite;
+  flex-shrink: 0;
+}
+@keyframes searchPulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(26, 115, 232, 0.7); }
+  70% { transform: scale(1.2); box-shadow: 0 0 0 6px rgba(26, 115, 232, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(26, 115, 232, 0); }
+}
+.web-search-banner-title {
+  font-weight: 700;
+  color: #1a73e8;
+}
+.web-search-banner-desc {
+  font-size: 12px;
+  color: #5f6368;
+}
+.web-search-banner-close {
+  background: transparent;
+  border: none;
+  color: #5f6368;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: bold;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+.web-search-banner-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: #202124;
+}
+
+/* Dark Mode Active Search Banner */
+html.dark .web-search-active-banner {
+  background: rgba(66, 133, 244, 0.14);
+  border-color: rgba(138, 180, 248, 0.3);
+  color: #8ab4f8;
+}
+html.dark .web-search-banner-pulse {
+  background: #8ab4f8;
+  box-shadow: 0 0 6px rgba(138, 180, 248, 0.8);
+}
+html.dark .web-search-banner-title {
+  color: #8ab4f8;
+}
+html.dark .web-search-banner-desc {
+  color: #9aa0a6;
+}
+html.dark .web-search-banner-close {
+  color: #9aa0a6;
+}
+html.dark .web-search-banner-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e8eaed;
+}
+
+
+/* ═══════════════════════════════════════════════════
    Attachment Dropdown Menu
    ═══════════════════════════════════════════════════ */
 .attachment-menu-wrapper {
