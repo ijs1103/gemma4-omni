@@ -667,10 +667,10 @@ export default function App() {
       // 이미지가 첨부되어 있을 때는 모호한 텍스트 검색을 건너뛰고 이미지 시각 분석을 우선함
       if (webSearchEnabled && !hasImageAttachment) {
         try {
-          const snippets = await remoteChatAdapter.searchWeb(promptText);
-          if (snippets && snippets.length > 0) {
+          const searchResult = await remoteChatAdapter.searchWeb(promptText);
+          if (searchResult && (searchResult.widget || (searchResult.snippets && searchResult.snippets.length > 0) || searchResult.compressed_context)) {
             const { systemPrompt: searchAugmentedPrompt } = buildWebSearchContext(
-              snippets,
+              searchResult,
               systemPrompt,
             );
             // 검색 활성화 시 히스토리를 최근 2턴(최대 4개)으로 절삭하여 토큰 예산 보호
@@ -681,7 +681,7 @@ export default function App() {
               ...recentTurns,
             ];
           } else {
-            // 2개 활성 엔진 모두 결과가 없는 경우
+            // 활성 엔진 모두 결과가 없는 경우
             toast.dismiss('search-fallback');
             toast.info('🔍 검색 결과가 없어 기본 AI 지식으로 답변합니다.', { toastId: 'search-fallback' });
           }

@@ -1,46 +1,45 @@
-"""웹 검색 프록시 API — SearXNG 연동."""
+"""웹 검색 및 RAG 고도화 프록시 API — Vane 5단계 파이프라인 연동."""
 
+import hashlib
 import logging
 import time
 from collections import defaultdict
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
-from app.schemas.search import SearchResponse, SearchSnippet
-
-import re
+from app.schemas.search import (
+    QueryPlanResult,
+    SearchResponse,
+    SearchSnippet,
+    SourceChunk,
+    WidgetResult,
+)
+from app.services.search.cache import engine_breakers, search_cache
+from app.services.search.instant_answers import InstantAnswerService
+from app.services.search.query_planner import QueryPlanner
+from app.services.search.reranker import Reranker
+from app.services.search.scraper import scrape_urls_parallel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
-# ── 인메모리 Rate Limit (단일 워커 전제 + 주기적 메모리 정리) ────────
+# ── 싱글톤 서비스 인스턴스 ───────────────────────────────────────────────────
+query_planner = QueryPlanner()
+instant_answer_service = InstantAnswerService()
+reranker = Reranker()
+
+# ── 인메모리 Rate Limit ───────────────────────────────────────────────────────
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _last_cleanup_time: float = 0.0
-_CLEANUP_INTERVAL_SECONDS: float = 300.0  # 5분마다 오래된 엔트리 전체 정리
-
-
-def _clean_search_query(q: str) -> str:
-    """대화체 질문에서 검색 엔진이 혼동하기 쉬운 종결어미 및 특수문자를 정제한다.
-
-    예: '오늘 서울 날씨 어떄?' -> '오늘 서울 날씨'
-        '2026년 인공지능 트렌드 알려줘!' -> '2026년 인공지능 트렌드'
-    """
-    cleaned = re.sub(r"[\?!\.,~]+$", "", q.strip())
-    patterns = [
-        r"\s*(?:어때|어떄|어떠니|어떨까|어떰|알려줘|알려줘요|알려주세요|알려줄래|알려주라|가르쳐줘|요약해줘|요약해줄래|설명해줘|설명해주세요|뭐야|뭐니|뭔지|알고\s*싶어|알고\s*싶어요|해줘|해줄래|해줘요|이야|인가요|인지)$",
-        r"^(?:혹시|저기|그|음)\s+",
-    ]
-    for p in patterns:
-        cleaned = re.sub(p, "", cleaned, flags=re.IGNORECASE).strip()
-    return cleaned if cleaned else q.strip()
+_CLEANUP_INTERVAL_SECONDS: float = 300.0
 
 
 def _cleanup_rate_limit_store(now: float) -> None:
-    """오래된 사용자의 타임스탬프 기록을 메모리에서 정리한다."""
     global _last_cleanup_time
     if now - _last_cleanup_time < _CLEANUP_INTERVAL_SECONDS:
         return
@@ -58,20 +57,11 @@ def _cleanup_rate_limit_store(now: float) -> None:
 
 
 def _check_rate_limit(user_id: str) -> None:
-    """사용자당 분당 요청 수를 제한한다.
-
-    단일 프로세스(uvicorn 단일 워커)에서만 유효하다.
-    멀티 워커/컨테이너 환경에서는 Redis 기반으로 전환해야 한다.
-    """
     now = time.time()
     _cleanup_rate_limit_store(now)
-
     window = 60.0
     max_requests = settings.SEARCH_RATE_LIMIT_PER_MINUTE
-
-    # 1분 이전 기록 정리
     _rate_limit_store[user_id] = [t for t in _rate_limit_store[user_id] if now - t < window]
-
     if len(_rate_limit_store[user_id]) >= max_requests:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -81,7 +71,6 @@ def _check_rate_limit(user_id: str) -> None:
 
 
 def _is_junk_snippet(title: str, content: str) -> bool:
-    """포털 로그인/접근 차단/발음 등 무의미한 스니펫 여부를 판별한다."""
     t_lower = title.lower()
     c_lower = content.lower()
     junk_patterns = [
@@ -108,30 +97,99 @@ async def search_web(
     max_results: int = Query(5, ge=1, le=5, description="최대 결과 수"),
     language: str = Query("ko-KR", description="검색 언어"),
 ) -> SearchResponse:
-    """SearXNG를 통해 웹 검색을 수행하고 스니펫을 반환한다.
+    """Vane 기반 5단계 웹 검색 및 RAG 고도화 파이프라인.
 
-    - 인증: Bearer JWT 필수 (CurrentUser)
-    - Rate Limit: 사용자당 분당 N회 (settings.SEARCH_RATE_LIMIT_PER_MINUTE)
-    - 스니펫 content: 300자 상한으로 truncate
-    - categories=general 고정 (이미지/동영상 결과 제외)
-    - content 필터링 후 max_results 슬라이스로 개수 보장
-    - 전체 활성 엔진 비응답 시 WARNING 레벨 경고 로깅
+    1. TTL 5분 캐시 확인
+    2. Query Planner: 질문 의도 분류 (날씨/환율/일반검색) 및 쿼리 재작성
+    3. Instant Answer Layer: Open-Meteo 날씨 / Frankfurter 환율 즉답 위젯 생성
+    4. SearXNG 멀티엔진 검색 및 CAPTCHA/차단 엔진 자동 격리
+    5. 비동기 웹 스크래퍼 (SSRF 방어 + bleach 새니타이징) & Kiwi BM25 리랭킹 (Gemma SP 토큰 예산 관리)
     """
     _check_rate_limit(str(current_user.id))
 
-    search_query = _clean_search_query(q)
+    # ── 1. TTL 5분 캐시 확인 ───────────────────────────────────────────────
+    cache_key = f"search:{hashlib.sha256(q.strip().lower().encode()).hexdigest()}"
+    cached_response = await search_cache.get(cache_key)
+    if cached_response and isinstance(cached_response, SearchResponse):
+        logger.info("Serving search result from 5-min TTL cache for query=%r", q)
+        return cached_response
+
+    # ── 2. Query Planner 분석 ──────────────────────────────────────────────
+    plan: QueryPlanResult = query_planner.plan(q)
+    logger.info("QueryPlan for %r: intent=%s, rewritten=%r", q, plan.intent, plan.rewritten_query)
+
+    # ── 3. Instant Answer Layer (즉답형 위젯 처리) ─────────────────────────
+    if plan.need_instant_answer:
+        widget: Optional[WidgetResult] = None
+        if plan.intent == "instant_weather":
+            breaker = engine_breakers.get("open_meteo")
+            if not breaker or await breaker.can_execute():
+                widget = await instant_answer_service.get_weather(
+                    lat=plan.entities.get("lat", 37.5665),
+                    lon=plan.entities.get("lon", 126.9780),
+                    location_name=plan.entities.get("location", "서울"),
+                    timezone=plan.entities.get("timezone", "Asia/Seoul"),
+                )
+                if widget and breaker:
+                    await breaker.record_success()
+                elif breaker:
+                    await breaker.record_failure()
+
+        elif plan.intent == "instant_currency":
+            breaker = engine_breakers.get("frankfurter")
+            if not breaker or await breaker.can_execute():
+                widget = await instant_answer_service.get_exchange_rate(
+                    from_curr=plan.entities.get("from_currency", "USD"),
+                    to_curr=plan.entities.get("to_currency", "KRW"),
+                    amount=plan.entities.get("amount", 1.0),
+                )
+                if widget and breaker:
+                    await breaker.record_success()
+                elif breaker:
+                    await breaker.record_failure()
+
+        if widget:
+            instant_response = SearchResponse(
+                query=q,
+                intent=plan.intent,
+                widget=widget,
+                sources=[],
+                snippets=[
+                    SearchSnippet(
+                        title=widget.title,
+                        content=widget.summary_text,
+                        url="https://open-meteo.com" if plan.intent == "instant_weather" else "https://frankfurter.dev",
+                    )
+                ],
+                compressed_context=widget.summary_text,
+            )
+            await search_cache.set(cache_key, instant_response)
+            return instant_response
+
+    # ── 4. SearXNG 멀티엔진 검색 & CAPTCHA/차단 엔진 자동 격리 ─────────────
+    # 서킷 브레이커가 열려있지 않은 가용 엔진 목록 추출
+    candidate_engines = ["duckduckgo", "bing", "brave", "qwant"]
+    active_engines: list[str] = []
+    for eng in candidate_engines:
+        brk = engine_breakers.get(eng)
+        if not brk or await brk.can_execute():
+            active_engines.append(eng)
+
+    if not active_engines:
+        active_engines = ["duckduckgo", "bing"]  # 최소 기본 엔진 유지
+
+    search_query = plan.rewritten_query or q
+    searxng_params = {
+        "q": search_query,
+        "format": "json",
+        "language": language,
+        "categories": "general",
+        "engines": ",".join(active_engines),
+    }
 
     try:
         async with httpx.AsyncClient(timeout=settings.SEARXNG_TIMEOUT) as client:
-            resp = await client.get(
-                settings.SEARXNG_URL,
-                params={
-                    "q": search_query,
-                    "format": "json",
-                    "language": language,
-                    "categories": "general",
-                },
-            )
+            resp = await client.get(settings.SEARXNG_URL, params=searxng_params)
             resp.raise_for_status()
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         logger.error("SearXNG connection error: %s", exc)
@@ -148,23 +206,25 @@ async def search_web(
 
     data = resp.json()
     all_results = data.get("results", [])
+    unresponsive = data.get("unresponsive_engines", [])
 
-    # 운영 모니터링용 엔진 응답 로깅 (2차원 리스트 구조 대응)
+    # 비응답 엔진 서킷 브레이커 기록
+    for eng_err in unresponsive:
+        eng_name = eng_err[0] if isinstance(eng_err, list) and eng_err else str(eng_err)
+        if eng_name in engine_breakers:
+            await engine_breakers[eng_name].record_failure()
+
+    # 정상 응답 엔진 서킷 브레이커 성공 기록
     responsive_engines = {r.get("engine") for r in all_results if r.get("engine")}
-    unresponsive_engines = data.get("unresponsive_engines", [])
-    logger.info(
-        "SearXNG search: query=%r, total_results=%d, responsive_engines=%s, unresponsive_engines=%s",
-        q,
-        len(all_results),
-        list(responsive_engines),
-        unresponsive_engines,
-    )
+    for eng_name in responsive_engines:
+        if eng_name in engine_breakers:
+            await engine_breakers[eng_name].record_success()
 
-    # content가 유효하고 정크/로그인 페이지가 아닌 항목만 필터링한 뒤 max_results개 슬라이스
+    # 정크 스니펫 필터링 및 기본 스니펫 목록 구성
     valid_snippets = [
         SearchSnippet(
             title=r.get("title", "")[:200],
-            content=r.get("content", "")[:300],  # 300자 상한
+            content=r.get("content", "")[:300],
             url=r.get("url", ""),
         )
         for r in all_results
@@ -173,14 +233,37 @@ async def search_web(
         and not _is_junk_snippet(r.get("title", ""), r.get("content", ""))
     ]
 
-    # ★ 전체 엔진 실패/결과 없음 시 ALERT 레벨 경고 로깅 (단일 장애점 대응)
-    if not valid_snippets:
-        logger.warning(
-            "SearXNG [ALERT]: All active engines failed or returned empty results for query=%r. "
-            "Responsive: %s, Unresponsive: %s",
-            q,
-            list(responsive_engines),
-            unresponsive_engines,
-        )
+    # ── 5. 비동기 웹 스크래핑 & Kiwi BM25 리랭킹 (Gemma SP 토큰 예산 관리) ──
+    top_urls = [s.url for s in valid_snippets[:3]]
+    scraped_map = await scrape_urls_parallel(top_urls, max_concurrency=3, timeout=3.5)
 
-    return SearchResponse(query=q, snippets=valid_snippets[:max_results])
+    # 스크래핑 성공 문서는 본문 사용, 실패 문서는 기존 검색 스니펫으로 그레이스풀 폴백
+    docs_to_rerank: list[dict[str, str]] = []
+    for snippet in valid_snippets[:max_results]:
+        scraped_text = scraped_map.get(snippet.url)
+        doc_text = scraped_text if scraped_text and len(scraped_text) > 100 else snippet.content
+        docs_to_rerank.append({
+            "url": snippet.url,
+            "title": snippet.title,
+            "text": doc_text,
+        })
+
+    selected_chunks, compressed_context = reranker.rerank(
+        query=search_query,
+        docs=docs_to_rerank,
+        top_k=4,
+        max_tokens=1600,
+    )
+
+    response = SearchResponse(
+        query=q,
+        intent=plan.intent,
+        widget=None,
+        sources=selected_chunks,
+        snippets=valid_snippets[:max_results],
+        compressed_context=compressed_context,
+    )
+
+    # 5분 TTL 캐시 저장
+    await search_cache.set(cache_key, response)
+    return response

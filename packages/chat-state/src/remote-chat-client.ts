@@ -85,6 +85,32 @@ export interface SearchSnippet {
   url: string;
 }
 
+/** 인스턴트 위젯 응답 (날씨/환율 등) */
+export interface WidgetResult {
+  type: 'weather' | 'currency' | 'calculator';
+  title: string;
+  data: Record<string, any>;
+  summary_text: string;
+}
+
+/** 스크래핑/리랭킹 본문 청크 */
+export interface SourceChunk {
+  url: string;
+  title: string;
+  text: string;
+  score?: number;
+}
+
+/** 고도화 검색 응답 객체 */
+export interface SearchResponse {
+  query: string;
+  intent?: string;
+  widget?: WidgetResult | null;
+  sources?: SourceChunk[];
+  snippets?: SearchSnippet[];
+  compressed_context?: string;
+}
+
 // ── 인터페이스 ──────────────────────────────────────────
 
 /**
@@ -115,6 +141,6 @@ export interface RemoteChatClient {
   /** 전체 멱등 동기화 푸시 (삭제 세션 skip, 다른 세션 소속 메시지 skip) */
   syncPush(sessions: SyncSessionPayload[]): Promise<SyncPushResponse>;
 
-  /** 웹 검색 수행 (SearXNG 프록시) */
-  searchWeb?(query: string, maxResults?: number): Promise<SearchSnippet[]>;
+  /** 웹 검색 수행 (SearXNG / Vane 고도화 파이프라인 프록시) */
+  searchWeb?(query: string, maxResults?: number): Promise<SearchResponse>;
 }

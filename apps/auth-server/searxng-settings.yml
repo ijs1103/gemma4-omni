@@ -6,6 +6,8 @@ use_default_settings:
     keep_only:
       - duckduckgo
       - bing
+      - brave
+      - qwant
 
 # ★ 필수 오버라이드 근거:
 # SearXNG 기본 설정(searx/settings.yml)에서 bing은 disabled: true로 선언되어 있습니다.
@@ -13,6 +15,10 @@ use_default_settings:
 # 아래와 같이 disabled: false로 명시적 오버라이드해야 categories=general에서 정상 쿼리됩니다.
 engines:
   - name: bing
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: qwant
     disabled: false
 
 server:

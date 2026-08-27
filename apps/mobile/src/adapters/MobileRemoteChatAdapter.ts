@@ -7,6 +7,7 @@ import type {
   SyncSessionPayload,
   SyncPushResponse,
   SearchSnippet,
+  SearchResponse,
 } from '@repo/chat-state';
 import type { MobileAuthAdapter } from './MobileAuthAdapter';
 
@@ -94,7 +95,7 @@ export class MobileRemoteChatAdapter implements RemoteChatClient {
     return res.json();
   }
 
-  async searchWeb(query: string, maxResults = 5): Promise<SearchSnippet[]> {
+  async searchWeb(query: string, maxResults = 5): Promise<SearchResponse> {
     const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&max_results=${maxResults}`;
 
     // 모바일 어댑터: getAccessToken()은 비동기 (Promise<string | null>)
@@ -122,13 +123,11 @@ export class MobileRemoteChatAdapter implements RemoteChatClient {
           },
         });
         if (!retryRes.ok) throw new Error(`Search API retry error ${retryRes.status}`);
-        const retryData = await retryRes.json();
-        return retryData.snippets || [];
+        return retryRes.json();
       }
     }
 
     if (!res.ok) throw new Error(`Search API error ${res.status}`);
-    const data = await res.json();
-    return data.snippets || [];
+    return res.json();
   }
 }

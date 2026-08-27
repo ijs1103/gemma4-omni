@@ -806,12 +806,12 @@ export default function ChatRoomScreen({ route, navigation }: any) {
       // 이미지가 첨부되어 있을 때는 모호한 텍스트 검색을 건너뛰고 이미지 시각 분석을 우선함
       if (webSearchEnabled && remoteAdapter.searchWeb && !hasImageAttachment) {
         try {
-          const snippets = await remoteAdapter.searchWeb(inputText.trim());
-          if (snippets && snippets.length > 0) {
+          const searchResult = await remoteAdapter.searchWeb(inputText.trim());
+          if (searchResult && (searchResult.widget || (searchResult.snippets && searchResult.snippets.length > 0) || searchResult.compressed_context)) {
             // buildMobileWebSearchPrompt로 마지막 user 메시지 콘텐츠를 래핑
             messagesForStream = updatedMessagesWithUser.map((msg, idx) => {
               if (idx === updatedMessagesWithUser.length - 1 && msg.role === 'user') {
-                return { ...msg, content: buildMobileWebSearchPrompt(snippets, msg.content) };
+                return { ...msg, content: buildMobileWebSearchPrompt(searchResult, msg.content) };
               }
               return msg;
             });
