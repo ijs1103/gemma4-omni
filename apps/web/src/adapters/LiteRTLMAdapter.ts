@@ -89,6 +89,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
   private loadStateCallbacks: Set<(state: ModelLoadState) => void> = new Set();
   private currentLoadState: ModelLoadState = { status: 'idle' };
   private abortController: AbortController | null = null;
+  private isInitializing: boolean = false;
 
   constructor() {}
 
@@ -98,6 +99,12 @@ export class LiteRTLMAdapter implements LLMAdapter {
   }
 
   async init(model: ModelSpec): Promise<void> {
+    if (this.isInitializing) {
+      console.warn('[LiteRTLMAdapter] init() is already in progress. Ignoring concurrent request.');
+      throw new Error('AI 모델 로딩이 이미 진행 중입니다. 잠시만 기다려 주세요.');
+    }
+
+    this.isInitializing = true;
     try {
       // LiteRT-LM has no initProgressCallback, so we just set to loading.
       this.updateLoadState({ status: 'loading', progress: 0 });
@@ -105,7 +112,9 @@ export class LiteRTLMAdapter implements LLMAdapter {
       if (this.engine) {
         try {
           await this.unload();
-        } catch (e) {}
+        } catch (e) {
+          console.warn('[LiteRTLMAdapter] Error during unload before init:', e);
+        }
       }
 
       const registryEntry = MODEL_REGISTRY[model.id];
@@ -123,7 +132,7 @@ export class LiteRTLMAdapter implements LLMAdapter {
       };
 
       console.log(`[LiteRTLMAdapter] crossOriginIsolated: ${self.crossOriginIsolated}`);
-      console.log(`[LiteRTLMAdapter] Starting Engine.create...`);
+      console.log(`[LiteRTLMAdapter] Starting Engine.create for model ${model.id}...`);
       const startTime = performance.now();
       this.engine = await Engine.create(engineSettings);
       const endTime = performance.now();
@@ -135,6 +144,8 @@ export class LiteRTLMAdapter implements LLMAdapter {
       const errMsg = err?.message || String(err);
       this.updateLoadState({ status: 'error', message: errMsg });
       throw err;
+    } finally {
+      this.isInitializing = false;
     }
   }
 

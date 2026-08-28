@@ -418,6 +418,10 @@ export default function App() {
 
   // 3. 모델 로드 트리거
   const handleLoadModel = async (overrideModelId?: string) => {
+    if (chatPhase === 'model-loading') {
+      console.warn('[handleLoadModel] Already loading a model, ignoring concurrent request.');
+      return;
+    }
     setChatPhase('model-loading');
     setLoadedModelId(null);
     setGenerationStats({});
@@ -1894,6 +1898,7 @@ export default function App() {
         onClose={() => setIsModelGalleryOpen(false)}
         currentLoadedModelId={loadedModelId}
         selectedModelId={selectedModelId}
+        isLoading={chatPhase === 'model-loading'}
         onSelectAndLoadModel={(targetModelId) => {
           setIsModelGalleryOpen(false);
           setSelectedModelId(targetModelId);

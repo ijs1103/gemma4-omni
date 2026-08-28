@@ -5,6 +5,7 @@ interface ModelGalleryModalProps {
   onClose: () => void;
   currentLoadedModelId: string | null;
   selectedModelId: string;
+  isLoading?: boolean;
   onSelectAndLoadModel: (modelId: string) => void;
 }
 
@@ -44,6 +45,7 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
   onClose,
   currentLoadedModelId,
   selectedModelId,
+  isLoading = false,
   onSelectAndLoadModel,
 }) => {
   if (!isOpen) return null;
@@ -275,12 +277,13 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
                     ) : (
                       <button
                         type="button"
+                        disabled={isLoading}
                         onClick={() => onSelectAndLoadModel(model.id)}
                         style={{
                           width: '100%',
                           padding: '12px 20px',
                           borderRadius: '24px',
-                          backgroundColor: '#1A73E8',
+                          backgroundColor: isLoading ? '#93c5fd' : '#1A73E8',
                           color: '#ffffff',
                           border: 'none',
                           fontSize: '14px',
@@ -289,15 +292,17 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: '6px',
-                          cursor: 'pointer',
+                          cursor: isLoading ? 'not-allowed' : 'pointer',
                           transition: 'background-color 0.2s',
                         }}
                       >
-                        <span>Try it</span>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                          <polyline points="12 5 19 12 12 19" />
-                        </svg>
+                        <span>{isLoading ? '로딩 중...' : 'Try it'}</span>
+                        {!isLoading && (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                            <polyline points="12 5 19 12 12 19" />
+                          </svg>
+                        )}
                       </button>
                     )}
                   </div>
