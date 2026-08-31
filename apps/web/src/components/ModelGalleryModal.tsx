@@ -44,7 +44,7 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
   isOpen,
   onClose,
   currentLoadedModelId,
-  selectedModelId,
+  selectedModelId: _selectedModelId,
   isLoading = false,
   onSelectAndLoadModel,
 }) => {
@@ -60,7 +60,6 @@ export const ModelGalleryModal: React.FC<ModelGalleryModalProps> = ({
         left: 0,
         width: '100vw',
         height: '100vh',
-        height: '100dvh',
         backgroundColor: 'rgba(0, 0, 0, 0.75)',
         backdropFilter: 'blur(8px)',
         zIndex: 10000,

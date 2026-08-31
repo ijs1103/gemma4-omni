@@ -703,7 +703,6 @@ export default function App() {
       });
 
       let lastRenderTime = 0;
-      let rafId: number | null = null;
 
       const flushUpdate = () => {
         setCurrentSession(prev => {
@@ -825,12 +824,6 @@ export default function App() {
     toast.info('답변 생성이 중지되었습니다.', { toastId: 'generation-interrupted' });
   };
 
-  // 9. 모델 언로드 핸들러
-  const handleUnloadModel = async () => {
-    await llmAdapter.unload();
-    setLoadedModelId(null);
-    setChatPhase('idle');
-  };
 
   // 10. 로그인 핸들러
   const handleLogin = async () => {

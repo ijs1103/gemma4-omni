@@ -6,7 +6,6 @@ import type {
   CreateMessageRequest,
   SyncSessionPayload,
   SyncPushResponse,
-  SearchSnippet,
   SearchResponse,
 } from '@repo/chat-state';
 import type { WebAuthAdapter } from './WebAuthAdapter';
