@@ -28,7 +28,12 @@ import {
 } from '@repo/auth-shared';
 
 // ── 설정 ────────────────────────────────────────────────────────────
-const API_URL = import.meta.env.VITE_AUTH_API_URL || '/api/v1/auth';
+const RAW_AUTH_URL = import.meta.env.VITE_AUTH_API_URL || '/api/v1/auth';
+// HTTPS 환경에서 HTTP 주소가 환경변수로 남아있을 경우 Mixed Content 방지를 위해 상대경로로 자동 전환
+const API_URL = (typeof window !== 'undefined' && window.location.protocol === 'https:' && RAW_AUTH_URL.startsWith('http://'))
+  ? '/api/v1/auth'
+  : RAW_AUTH_URL;
+
 const REDIRECT_URI = import.meta.env.VITE_AUTH_REDIRECT_URI || `${window.location.origin}/auth/callback`;
 
 // localStorage 키

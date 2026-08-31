@@ -10,8 +10,11 @@ import type {
 } from '@repo/chat-state';
 import type { WebAuthAdapter } from './WebAuthAdapter';
 
-const API_URL = import.meta.env.VITE_CHAT_API_URL
-  || '/api/v1/chats';
+const RAW_CHAT_URL = import.meta.env.VITE_CHAT_API_URL || '/api/v1/chats';
+// HTTPS 환경에서 HTTP 주소가 환경변수로 남아있을 경우 Mixed Content 방지를 위해 상대경로로 자동 전환
+const API_URL = (typeof window !== 'undefined' && window.location.protocol === 'https:' && RAW_CHAT_URL.startsWith('http://'))
+  ? '/api/v1/chats'
+  : RAW_CHAT_URL;
 
 // /api/v1 베이스 URL (chats 경로 제거)
 const API_BASE_URL = API_URL.replace(/\/chats$/, '');
