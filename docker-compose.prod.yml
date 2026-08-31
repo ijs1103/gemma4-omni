@@ -23,8 +23,12 @@ services:
     environment:
       - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/0
-      - SEARXNG_URL=http://searxng:8080
+      - SEARXNG_URL=http://searxng:8080/search
       - JWT_SECRET_KEY=gemma4_secret_super_key_2026
+      - CORS_ORIGINS=["https://gemma4-omni-web.vercel.app","http://localhost:5173","http://localhost:3000"]
+      - ALLOWED_REDIRECT_URIS=["https://gemma4-omni-web.vercel.app/auth/callback","http://localhost:5173/auth/callback","http://localhost:3000/auth/callback"]
+    env_file:
+      - ./apps/auth-server/.env
     depends_on:
       - redis
       - searxng
