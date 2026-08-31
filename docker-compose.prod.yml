@@ -1,0 +1,32 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+  searxng:
+    image: searxng/searxng:latest
+    restart: always
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    volumes:
+      - ./apps/auth-server/searxng-settings.yml:/etc/searxng/settings.yml:ro
+  auth-server:
+    build:
+      context: ./apps/auth-server
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - REDIS_URL=redis://redis:6379/0
+      - SEARXNG_URL=http://searxng:8080
+      - JWT_SECRET_KEY=gemma4_secret_super_key_2026
+    depends_on:
+      - redis
+      - searxng
+volumes:
+  redis_data:
