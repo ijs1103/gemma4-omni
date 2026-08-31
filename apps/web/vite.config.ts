@@ -19,6 +19,14 @@ export default defineConfig({
       },
     },
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
   // 빌드 시 프리뷰 서버에도 동일 헤더 적용
   preview: {
     headers: {

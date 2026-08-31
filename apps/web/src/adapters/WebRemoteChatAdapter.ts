@@ -11,7 +11,7 @@ import type {
 import type { WebAuthAdapter } from './WebAuthAdapter';
 
 const API_URL = import.meta.env.VITE_CHAT_API_URL
-  || 'http://localhost:8000/api/v1/chats';
+  || '/api/v1/chats';
 
 // /api/v1 베이스 URL (chats 경로 제거)
 const API_BASE_URL = API_URL.replace(/\/chats$/, '');

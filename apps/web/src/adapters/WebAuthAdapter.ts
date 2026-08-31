@@ -28,7 +28,7 @@ import {
 } from '@repo/auth-shared';
 
 // ── 설정 ────────────────────────────────────────────────────────────
-const API_URL = import.meta.env.VITE_AUTH_API_URL || 'http://localhost:8000/api/v1/auth';
+const API_URL = import.meta.env.VITE_AUTH_API_URL || '/api/v1/auth';
 const REDIRECT_URI = import.meta.env.VITE_AUTH_REDIRECT_URI || `${window.location.origin}/auth/callback`;
 
 // localStorage 키
