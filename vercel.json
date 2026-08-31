@@ -1,6 +1,12 @@
 {
   "buildCommand": "pnpm turbo run build --filter=web",
   "outputDirectory": "apps/web/dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "http://161.33.7.206:8000/api/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
