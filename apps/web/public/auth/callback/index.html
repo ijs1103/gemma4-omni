@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>로그인 처리 중...</title>
   <style>
     body {
@@ -11,86 +12,108 @@
       justify-content: center;
       min-height: 100vh;
       margin: 0;
-      background: #1a1a2e;
-      color: #e0e0ff;
+      background: #0f172a;
+      color: #e2e8f0;
     }
     .container {
       text-align: center;
+      padding: 24px;
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
     }
     .spinner {
       width: 40px;
       height: 40px;
       margin: 0 auto 16px;
       border: 3px solid rgba(255,255,255,0.1);
-      border-top: 3px solid #6C63FF;
+      border-top: 3px solid #3b82f6;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
-    p { font-size: 14px; opacity: 0.7; }
+    p { font-size: 15px; margin: 0; }
+    .btn-close {
+      margin-top: 16px;
+      padding: 8px 16px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="spinner"></div>
-    <p>로그인 처리 중입니다...</p>
+    <div class="spinner" id="spinner"></div>
+    <p id="msg">로그인 인증 처리 중입니다...</p>
+    <button class="btn-close" id="closeBtn" onclick="window.close()">창 닫기</button>
   </div>
 
   <script>
-    /**
-     * OAuth 콜백 페이지 (팝업 용)
-     *
-     * OAuth 제공자(Google, Kakao 등)가 인증 완료 후 이 페이지로 리다이렉트합니다.
-     * URL의 query parameter에서 code와 state를 추출하여
-     * 부모 창(window.opener)에 postMessage로 전달합니다.
-     *
-     * 플로우:
-     * 1. OAuth 제공자 → /auth/callback?code=xxx&state=yyy 로 리다이렉트
-     * 2. 이 페이지가 code, state를 파싱
-     * 3. window.opener.postMessage({ type: 'OAUTH_CALLBACK', code, state })
-     * 4. 부모 창의 WebAuthAdapter.waitForOAuthCallback이 수신
-     * 5. 이 팝업 자동 닫힘
-     */
-
     (function() {
       const params = new URLSearchParams(window.location.search);
-      const code = params.get('code');
-      const state = params.get('state');
-      const error = params.get('error');
+      const code = params.get('code') || params.get('auth_code');
+      const state = params.get('state') || params.get('auth_state');
+      const error = params.get('error') || params.get('auth_error');
 
-      if (window.opener) {
-        if (error) {
-          window.opener.postMessage({
-            type: 'OAUTH_CALLBACK',
-            error: error,
-          }, window.location.origin);
-        } else if (code) {
-          window.opener.postMessage({
-            type: 'OAUTH_CALLBACK',
-            code: code,
-            state: state,
-          }, window.location.origin);
-        } else {
-          window.opener.postMessage({
-            type: 'OAUTH_CALLBACK',
-            error: 'no_code',
-          }, window.location.origin);
-        }
+      const payload = {
+        type: 'OAUTH_CALLBACK',
+        code: code,
+        state: state,
+        error: error,
+        timestamp: Date.now()
+      };
 
-        // 팝업 닫기 (약간 딜레이를 두어 postMessage 전달 보장)
-        setTimeout(() => window.close(), 300);
-      } else {
-        // 팝업이 아닌 일반 탭으로 열린 경우 (Redirect 모드 fallback)
-        // 메인 페이지로 code를 포함하여 리다이렉트
-        const redirectUrl = new URL('/', window.location.origin);
-        if (code) redirectUrl.searchParams.set('auth_code', code);
-        if (state) redirectUrl.searchParams.set('auth_state', state);
-        if (error) redirectUrl.searchParams.set('auth_error', error);
-        window.location.href = redirectUrl.toString();
+      console.log('[OAuth Callback] Processing callback:', payload);
+
+      // 1. BroadcastChannel 전송 (COOP 환경에서도 부모 창에 안전하게 전달)
+      try {
+        const bc = new BroadcastChannel('oauth_channel');
+        bc.postMessage(payload);
+        setTimeout(function() { try { bc.close(); } catch(e){} }, 1000);
+      } catch (e) {
+        console.warn('BroadcastChannel failed:', e);
       }
+
+      // 2. localStorage 저장 (부모 창 폴링 및 storage 이벤트 감지용)
+      try {
+        localStorage.setItem('oauth_callback_data', JSON.stringify(payload));
+      } catch (e) {
+        console.warn('localStorage failed:', e);
+      }
+
+      // 3. postMessage (opener가 연결되어 있는 경우)
+      if (window.opener) {
+        try {
+          window.opener.postMessage(payload, '*');
+        } catch (e) {
+          console.warn('postMessage failed:', e);
+        }
+      }
+
+      // 4. 완료 UI 안내 및 팝업 닫기
+      document.getElementById('msg').textContent = error 
+        ? '로그인 중 오류가 발생했습니다. 이 창을 닫아주세요.' 
+        : '인증이 완료되었습니다. 창이 곧 닫힙니다...';
+      
+      const closeBtn = document.getElementById('closeBtn');
+      if (closeBtn) closeBtn.style.display = 'inline-block';
+
+      // 5. 팝업 자동 닫기 시도
+      setTimeout(function() {
+        try {
+          window.close();
+        } catch (e) {}
+      }, 500);
     })();
   </script>
 </body>
 </html>
+

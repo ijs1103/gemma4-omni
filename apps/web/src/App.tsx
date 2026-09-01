@@ -385,8 +385,42 @@ export default function App() {
   };
 
 
-  // online / visibilitychange / authStateChange 이벤트 연동
+  // online / visibilitychange / authStateChange / OAuth callback 이벤트 연동
   useEffect(() => {
+    // OAuth 리디렉트 콜백 파라미터 처리 (?auth_code=... 또는 ?code=...)
+    const urlParams = new URLSearchParams(window.location.search);
+    const authCode = urlParams.get('auth_code') || urlParams.get('code');
+    const authState = urlParams.get('auth_state') || urlParams.get('state');
+    const authError = urlParams.get('auth_error') || urlParams.get('error');
+
+    if (authCode || authError) {
+      const payload = {
+        type: 'OAUTH_CALLBACK',
+        code: authCode,
+        state: authState,
+        error: authError,
+        timestamp: Date.now()
+      };
+      
+      try {
+        const bc = new BroadcastChannel('oauth_channel');
+        bc.postMessage(payload);
+        setTimeout(() => { try { bc.close(); } catch(e){} }, 1000);
+      } catch (e) {}
+
+      try {
+        localStorage.setItem('oauth_callback_data', JSON.stringify(payload));
+      } catch (e) {}
+
+      if (window.opener || window.name === 'oauth_popup') {
+        setTimeout(() => {
+          try { window.close(); } catch (e) {}
+        }, 500);
+      }
+
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     const handleOnline = () => {
       retryPendingSync().then(() => refreshSessionList());
     };
