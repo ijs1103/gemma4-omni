@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createHighlighter, type Highlighter } from 'shiki';
 import { toast } from 'react-toastify';
 import { useTheme } from '../context/ThemeContext';
@@ -10,8 +10,9 @@ interface CodeBlockProps {
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 let cachedHighlighter: Highlighter | null = null;
+const readyListeners = new Set<() => void>();
 
-function getHighlighterInstance() {
+function initHighlighter() {
   if (cachedHighlighter) return Promise.resolve(cachedHighlighter);
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
@@ -19,42 +20,54 @@ function getHighlighterInstance() {
       langs: ['typescript', 'tsx', 'javascript', 'json', 'bash', 'python', 'sql', 'html', 'css', 'markdown'],
     }).then((h) => {
       cachedHighlighter = h;
+      readyListeners.forEach((fn) => fn());
       return h;
+    }).catch((err) => {
+      console.error('[CodeBlock] Shiki initialization failed:', err);
+      highlighterPromise = null;
+      throw err;
     });
   }
   return highlighterPromise;
 }
 
+// Module 로드 시점에 Shiki 싱글톤 사전 초기화
+initHighlighter();
+
 export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({ code, language = 'text' }) => {
-  const [html, setHtml] = useState<string | null>(null);
+  const [, setTick] = useState(0);
   const [copied, setCopied] = useState(false);
   const { isDarkMode } = useTheme();
 
   const cleanLang = language.toLowerCase().trim() || 'text';
 
+  // Highlighter 로드 완료 시 1회 리렌더링 트리거
   useEffect(() => {
-    let isMounted = true;
-
-    getHighlighterInstance().then((highlighter) => {
-      if (!isMounted) return;
-      const loadedLangs = highlighter.getLoadedLanguages();
-      const validLang = loadedLangs.includes(cleanLang) ? cleanLang : 'text';
-
-      try {
-        const activeTheme = isDarkMode ? 'github-dark' : 'github-light';
-        const highlightedHtml = highlighter.codeToHtml(code, {
-          lang: validLang,
-          theme: activeTheme,
-        });
-        setHtml(highlightedHtml);
-      } catch (err) {
-        console.error('[CodeBlock] Highlighting failed:', err);
-      }
-    });
-
+    if (cachedHighlighter) return;
+    const onReady = () => setTick((t) => t + 1);
+    readyListeners.add(onReady);
+    initHighlighter();
     return () => {
-      isMounted = false;
+      readyListeners.delete(onReady);
     };
+  }, []);
+
+  // cachedHighlighter가 준비되어 있으면 동일 렌더 프레임에서 동기식(Synchronous)으로 즉시 하이라이팅
+  const highlightedHtml = useMemo(() => {
+    if (!cachedHighlighter) return null;
+    const loadedLangs = cachedHighlighter.getLoadedLanguages();
+    const validLang = loadedLangs.includes(cleanLang) ? cleanLang : 'text';
+    const activeTheme = isDarkMode ? 'github-dark' : 'github-light';
+
+    try {
+      return cachedHighlighter.codeToHtml(code, {
+        lang: validLang,
+        theme: activeTheme,
+      });
+    } catch (err) {
+      console.warn('[CodeBlock] Highlighting fallback to plain text:', err);
+      return null;
+    }
   }, [code, cleanLang, isDarkMode]);
 
   const handleCopy = () => {
@@ -72,7 +85,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({ code, language 
         ? 'border-white/10 bg-[#0d1117] text-gray-200' 
         : 'border-gray-200 bg-[#ffffff] text-gray-800'
     }`}>
-      <div className={`shiki-code-header flex items-center justify-between px-4 py-2 border-b text-xs font-mono ${
+      <div className={`shiki-code-header flex items-center justify-between px-4 py-2 border-b text-xs font-mono select-none ${
         isDarkMode 
           ? 'bg-[#161b22] border-white/10 text-gray-400' 
           : 'bg-[#f6f8fa] border-gray-200 text-gray-600'
@@ -96,10 +109,10 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({ code, language 
         </button>
       </div>
       <div className="shiki-code-content p-4 text-xs font-mono overflow-x-auto">
-        {html ? (
-          <div dangerouslySetInnerHTML={{ __html: html }} />
+        {highlightedHtml ? (
+          <div dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
         ) : (
-          <pre className={isDarkMode ? 'text-gray-300' : 'text-gray-800'}>
+          <pre className={`m-0 p-0 bg-transparent text-xs font-mono ${isDarkMode ? 'text-gray-300' : 'text-gray-800'}`}>
             <code>{code}</code>
           </pre>
         )}

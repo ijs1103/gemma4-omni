@@ -226,9 +226,13 @@ export default function App() {
     initDiagnostics();
   }, []);
 
-  // 대화 및 스냅 자동 스크롤
+  // 대화 및 스냅 자동 스크롤 (스트리밍 중에는 auto 즉시 스크롤하여 덜컹거림 Jitter 방지)
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatPhase === 'generating') {
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    } else {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [currentSession?.messages, chatPhase]);
 
   // 오프라인/재연결 시 펜딩 데이터 통합 재시도 함수 (인증 가드 포함)

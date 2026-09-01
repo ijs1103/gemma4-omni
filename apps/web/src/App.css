@@ -2205,14 +2205,22 @@ html.dark .Toastify__toast {
 /* ============================================================
  * SHIKI CODE BLOCK STYLES
  * ============================================================ */
-.shiki-code-content pre.shiki {
+.shiki-code-content pre.shiki,
+.shiki-code-content pre {
   margin: 0 !important;
   padding: 0 !important;
   background-color: transparent !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  white-space: pre !important;
+  tab-size: 2 !important;
 }
 
 .shiki-code-content code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
 }
 
 
