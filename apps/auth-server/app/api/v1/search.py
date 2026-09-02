@@ -100,8 +100,8 @@ async def search_web(
     """Vane 기반 5단계 웹 검색 및 RAG 고도화 파이프라인.
 
     1. TTL 5분 캐시 확인
-    2. Query Planner: 질문 의도 분류 (날씨/환율/일반검색) 및 쿼리 재작성
-    3. Instant Answer Layer: Open-Meteo 날씨 / Frankfurter 환율 즉답 위젯 생성
+    2. Query Planner: 질문 의도 분류 (날씨/환율/코인/증시/일반검색) 및 쿼리 재작성
+    3. Instant Answer Layer: 날씨/환율/암호화폐/주가지수 즉답 위젯 생성
     4. SearXNG 멀티엔진 검색 및 CAPTCHA/차단 엔진 자동 격리
     5. 비동기 웹 스크래퍼 (SSRF 방어 + bleach 새니타이징) & Kiwi BM25 리랭킹 (Gemma SP 토큰 예산 관리)
     """

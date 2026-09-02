@@ -12,8 +12,8 @@ import { kakaoNativeLogin, naverNativeLogin } from './NativeLoginHelper';
 const API_HOST_FOR_APP = '161.33.7.206:8000';
 const API_URL = `http://${API_HOST_FOR_APP}/api/v1/auth`;
 
-// Google OAuth 보안 정책(RFC 8252) 준수: Google은 raw HTTP IP를 redirect_uri로 허용하지 않으므로 Vercel의 HTTPS 프록시 주소를 사용합니다.
-const WEB_LANDING_URI = 'https://gemma4-omni-web.vercel.app/api/v1/auth/social/mobile-landing';
+// Google Cloud Console에 정식 등록된 공인 HTTPS 리다이렉트 URI (400 redirect_uri_mismatch 원천 방지)
+const WEB_LANDING_URI = 'https://gemma4-omni-web.vercel.app/auth/callback';
 
 // InAppBrowser가 캐치해야 하는 최종 앱의 딥링크 스킴
 const MOBILE_DEEP_LINK = 'com.mobile://oauth/callback';
