@@ -376,6 +376,12 @@ export class WebAuthAdapter implements AuthAdapter {
     popup: Window
   ): Promise<Record<string, string>> {
     return new Promise((resolve, reject) => {
+      // 1. 이전 로그인 시도의 잔여 데이터 즉시 삭제 및 시작 시점 기록
+      try {
+        localStorage.removeItem('oauth_callback_data');
+      } catch (_) {}
+      const loginStartTime = Date.now();
+
       console.log('[WebAuthAdapter] Waiting for OAuth callback (COOP-safe)...');
       let settled = false;
 
@@ -396,6 +402,7 @@ export class WebAuthAdapter implements AuthAdapter {
       const handleMessage = (event: MessageEvent) => {
         if (event.data?.type === 'OAUTH_CALLBACK') {
           console.log('[WebAuthAdapter] postMessage received:', event.data);
+          try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
           if (event.data.error) {
             settle(undefined, new Error(`OAuth 에러: ${event.data.error}`));
           } else {
@@ -412,6 +419,11 @@ export class WebAuthAdapter implements AuthAdapter {
           try {
             const data = JSON.parse(event.newValue);
             localStorage.removeItem('oauth_callback_data');
+            // 이전 로그인 잔여 데이터(stale) 무시
+            if (data.timestamp && data.timestamp < loginStartTime - 500) {
+              console.warn('[WebAuthAdapter] Ignoring stale storage event data:', data);
+              return;
+            }
             if (data.error) {
               settle(undefined, new Error(`OAuth 에러: ${data.error}`));
             } else {
@@ -431,6 +443,12 @@ export class WebAuthAdapter implements AuthAdapter {
         bc.onmessage = (event) => {
           if (event.data?.type === 'OAUTH_CALLBACK') {
             console.log('[WebAuthAdapter] BroadcastChannel received:', event.data);
+            try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
+            // 이전 로그인 잔여 데이터(stale) 무시
+            if (event.data.timestamp && event.data.timestamp < loginStartTime - 500) {
+              console.warn('[WebAuthAdapter] Ignoring stale BroadcastChannel data:', event.data);
+              return;
+            }
             if (event.data.error) {
               settle(undefined, new Error(`OAuth 에러: ${event.data.error}`));
             } else {
@@ -448,10 +466,15 @@ export class WebAuthAdapter implements AuthAdapter {
       const localStoragePoll = setInterval(() => {
         const stored = localStorage.getItem('oauth_callback_data');
         if (stored) {
-          console.log('[WebAuthAdapter] localStorage poll found data:', stored);
           try {
             const data = JSON.parse(stored);
             localStorage.removeItem('oauth_callback_data');
+            // 이전 로그인 잔여 데이터(stale) 무시
+            if (data.timestamp && data.timestamp < loginStartTime - 500) {
+              console.warn('[WebAuthAdapter] Ignoring stale polled data:', data);
+              return;
+            }
+            console.log('[WebAuthAdapter] localStorage poll found valid fresh data:', data);
             if (data.error) {
               settle(undefined, new Error(`OAuth 에러: ${data.error}`));
             } else {
@@ -463,14 +486,10 @@ export class WebAuthAdapter implements AuthAdapter {
         }
       }, 300);
 
-      // ── 팝업 닫힘 감지 제거 ──────────────────────────────────────
-      // COOP로 인해 구글로 이동하는 순간 popup.closed가 즉시 true가 됩니다.
-      // 따라서 popup.closed로 사용자가 창을 닫았는지 판단할 수 없습니다.
-      // 대신, 상단에 선언된 5분(300,000ms) 전체 타임아웃을 의존합니다.
-
       const cleanup = () => {
         clearTimeout(timeout);
         clearInterval(localStoragePoll);
+        try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
         window.removeEventListener('message', handleMessage);
         window.removeEventListener('storage', handleStorage);
         try { bc?.close(); } catch (_) {}
