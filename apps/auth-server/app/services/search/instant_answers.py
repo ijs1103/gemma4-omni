@@ -179,3 +179,171 @@ class InstantAnswerService:
             },
             summary_text=summary,
         )
+
+    async def get_crypto_price(
+        self,
+        coin_ids: list[str],
+    ) -> Optional[WidgetResult]:
+        """CoinGecko Public API를 호출하여 주요 암호화폐 실시간 가격 위젯을 생성한다."""
+        if not coin_ids:
+            coin_ids = ["bitcoin"]
+
+        ids_param = ",".join(coin_ids)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+                res = await client.get(
+                    "https://api.coingecko.com/api/v3/simple/price",
+                    params={
+                        "ids": ids_param,
+                        "vs_currencies": "krw,usd",
+                        "include_24hr_change": "true",
+                    },
+                )
+                if not res.is_success:
+                    logger.warning("CoinGecko API returned %d", res.status_code)
+                    return None
+                data = res.json()
+        except Exception as e:
+            logger.warning("CoinGecko API call failed: %s", e)
+            return None
+
+        today_str = datetime.date.today().strftime("%Y년 %m월 %d일")
+        name_map = {
+            "bitcoin": "비트코인 (BTC)",
+            "ethereum": "이더리움 (ETH)",
+            "ripple": "리플 (XRP)",
+            "solana": "솔라나 (SOL)",
+            "dogecoin": "도지코인 (DOGE)",
+        }
+
+        lines = [f"[{today_str} 실시간 가상화폐 시세 정보]"]
+        for cid in coin_ids:
+            if cid in data:
+                cinfo = data[cid]
+                krw_price = cinfo.get("krw", 0)
+                usd_price = cinfo.get("usd", 0)
+                change_24h = cinfo.get("krw_24h_change", 0.0)
+                change_sign = "+" if change_24h > 0 else ""
+                lines.append(
+                    f"- {name_map.get(cid, cid.upper())}: {krw_price:,.0f}원 (${usd_price:,.2f} USD, 24시간 변동률: {change_sign}{change_24h:.2f}%)"
+                )
+
+        lines.append("(출처: CoinGecko 실시간 암호화폐 시세)")
+        summary = "\n".join(lines)
+
+        first_coin = coin_ids[0]
+        first_krw = data.get(first_coin, {}).get("krw", 0)
+
+        return WidgetResult(
+            type="crypto",
+            title=f"{name_map.get(first_coin, first_coin.upper())} 실시간 시세 ({first_krw:,.0f}원)",
+            data=data,
+            summary_text=summary,
+        )
+
+    async def get_stock_index(
+        self,
+        indices: list[str],
+    ) -> Optional[WidgetResult]:
+        """한국(Naver Finance) 및 미국(Yahoo Finance) 주요 주가지수 위젯을 생성한다."""
+        today_str = datetime.date.today().strftime("%Y년 %m월 %d일")
+        lines = [f"[{today_str} 주요 주가지수 실시간 현황]"]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        data_collected: dict[str, Any] = {}
+
+        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+            for idx in indices:
+                idx_upper = idx.upper()
+                # 국내 지수: KOSPI, KOSDAQ
+                if idx_upper in ["KOSPI", "코스피", "KOSDAQ", "코스닥"]:
+                    target = "KOSPI" if "KOSPI" in idx_upper or "코스피" in idx_upper else "KOSDAQ"
+                    try:
+                        res = await client.get(f"https://m.stock.naver.com/api/index/{target}/basic")
+                        if res.is_success:
+                            d = res.json()
+                            name = d.get("stockName", target)
+                            price = d.get("closePrice", "")
+                            change = d.get("compareToPreviousClosePrice", "")
+                            ratio = d.get("fluctuationsRatio", "")
+                            status_text = d.get("compareToPreviousPrice", {}).get("text", "")
+                            lines.append(f"- {name}: {price}pt (전일대비 {change}pt, {ratio}%, {status_text})")
+                            data_collected[target] = d
+                    except Exception as e:
+                        logger.warning("Naver stock API error for %s: %s", target, e)
+
+                # 해외 지수: NASDAQ, S&P500, DOW
+                elif idx_upper in ["NASDAQ", "나스닥", "S&P500", "S&P", "DOW", "다우"]:
+                    sym_map = {
+                        "NASDAQ": ("^IXIC", "나스닥 (NASDAQ)"),
+                        "나스닥": ("^IXIC", "나스닥 (NASDAQ)"),
+                        "S&P500": ("^GSPC", "S&P 500"),
+                        "S&P": ("^GSPC", "S&P 500"),
+                        "DOW": ("^DJI", "다우존스 (Dow Jones)"),
+                        "다우": ("^DJI", "다우존스 (Dow Jones)"),
+                    }
+                    sym, disp_name = sym_map.get(idx_upper, ("^IXIC", "나스닥"))
+                    try:
+                        res = await client.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}")
+                        if res.is_success:
+                            meta = res.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+                            curr_price = meta.get("regularMarketPrice", 0.0)
+                            prev_close = meta.get("chartPreviousClose", curr_price)
+                            diff = curr_price - prev_close
+                            ratio = (diff / prev_close * 100) if prev_close else 0.0
+                            sign = "+" if diff > 0 else ""
+                            lines.append(f"- {disp_name}: {curr_price:,.2f}pt (전일대비 {sign}{diff:,.2f}pt, {sign}{ratio:.2f}%)")
+                            data_collected[sym] = meta
+                    except Exception as e:
+                        logger.warning("Yahoo Finance API error for %s: %s", sym, e)
+
+        if len(lines) <= 1:
+            return None
+
+        lines.append("(출처: 한국거래소 / Naver 증시 / Yahoo Finance 실시간 데이터)")
+        summary = "\n".join(lines)
+
+        return WidgetResult(
+            type="stock",
+            title=f"주요 증시 지수 현황",
+            data=data_collected,
+            summary_text=summary,
+        )
+
+    async def get_finance_composite(
+        self,
+        cryptos: list[str],
+        stocks: list[str],
+    ) -> Optional[WidgetResult]:
+        """가상화폐와 주가지수가 혼합된 질문(예: 비트코인 + 코스피)에 대한 통합 금융 위젯을 생성한다."""
+        today_str = datetime.date.today().strftime("%Y년 %m월 %d일")
+        sections: list[str] = [f"[{today_str} 실시간 금융 및 자산 시장 현황]"]
+
+        # 1. 암호화폐 조회
+        if cryptos:
+            crypto_res = await self.get_crypto_price(cryptos)
+            if crypto_res and crypto_res.summary_text:
+                sections.append("■ 암호화폐 시세 (출처: CoinGecko)")
+                # 헤더와 푸터 제외한 본문 줄만 추출
+                body_lines = [l for l in crypto_res.summary_text.splitlines() if l.startswith("- ")]
+                sections.extend(body_lines)
+
+        # 2. 주가지수 조회
+        if stocks:
+            stock_res = await self.get_stock_index(stocks)
+            if stock_res and stock_res.summary_text:
+                sections.append("■ 주요 주가지수 (출처: 한국거래소 / 네이버 증시 / Yahoo Finance)")
+                body_lines = [l for l in stock_res.summary_text.splitlines() if l.startswith("- ")]
+                sections.extend(body_lines)
+
+        if len(sections) <= 1:
+            return None
+
+        summary = "\n".join(sections)
+        return WidgetResult(
+            type="finance_composite",
+            title=f"실시간 금융/자산 지표 통합 현황",
+            data={"cryptos": cryptos, "stocks": stocks},
+            summary_text=summary,
+        )

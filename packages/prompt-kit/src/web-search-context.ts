@@ -28,7 +28,7 @@ export interface SearchSnippet {
 }
 
 export interface WidgetResult {
-  type: 'weather' | 'currency' | 'calculator';
+  type: 'weather' | 'currency' | 'crypto' | 'stock' | 'finance_composite' | 'calculator' | string;
   title: string;
   data: Record<string, any>;
   summary_text: string;

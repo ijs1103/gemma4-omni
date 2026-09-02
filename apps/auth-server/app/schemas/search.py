@@ -13,9 +13,9 @@ class SearchSnippet(BaseModel):
 
 
 class WidgetResult(BaseModel):
-    """인스턴트 위젯 응답 (날씨, 환율, 계산 등)."""
+    """인스턴트 위젯 응답 (날씨, 환율, 가상화폐, 주가지수 등)."""
 
-    type: Literal["weather", "currency", "calculator"]
+    type: Literal["weather", "currency", "crypto", "stock", "finance_composite", "calculator"]
     title: str
     data: dict[str, Any] = Field(default_factory=dict)
     summary_text: str  # LLM이 즉시 인용할 수 있는 자연어 요약 문장
@@ -33,7 +33,7 @@ class SourceChunk(BaseModel):
 class QueryPlanResult(BaseModel):
     """Query Planner 분석 결과."""
 
-    intent: Literal["instant_weather", "instant_currency", "web_search"]
+    intent: Literal["instant_weather", "instant_currency", "instant_crypto", "instant_stock", "instant_finance_composite", "web_search"]
     rewritten_query: str
     entities: dict[str, Any] = Field(default_factory=dict)
     need_scrape: bool = True

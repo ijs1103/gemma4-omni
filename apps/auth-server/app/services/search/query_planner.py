@@ -72,6 +72,22 @@ class QueryPlanner:
             "환율", "달러", "엔화", "유로", "위안", "파운드", "원달러",
             "환전", "currency", "exchange rate", "forex", "usd/krw"
         ]
+        self.crypto_keywords = {
+            "비트코인": "bitcoin", "btc": "bitcoin",
+            "이더리움": "ethereum", "eth": "ethereum",
+            "리플": "ripple", "xrp": "ripple",
+            "솔라나": "solana", "sol": "solana",
+            "도지코인": "dogecoin", "도지": "dogecoin", "doge": "dogecoin",
+            "가상화폐": "bitcoin", "암호화폐": "bitcoin", "코인": "bitcoin",
+        }
+        self.stock_keywords = {
+            "코스피": "KOSPI", "kospi": "KOSPI",
+            "코스닥": "KOSDAQ", "kosdaq": "KOSDAQ",
+            "나스닥": "NASDAQ", "nasdaq": "NASDAQ",
+            "s&p500": "S&P500", "s&p": "S&P500", "에스앤피": "S&P500",
+            "다우존스": "DOW", "다우": "DOW", "dow": "DOW",
+            "주가지수": "KOSPI", "증시": "KOSPI",
+        }
 
     def plan(self, raw_query: str) -> QueryPlanResult:
         """질의를 분석하여 실행 계획(Plan)을 수립한다."""
@@ -115,7 +131,36 @@ class QueryPlanner:
                 need_instant_answer=True,
             )
 
-        # 3. 일반 웹 검색 의도
+        # 3. 암호화폐 및 주가지수 복합/단일 금융 의도 분석
+        matched_cryptos = self._extract_cryptos(raw_query)
+        matched_stocks = self._extract_stocks(raw_query)
+
+        if matched_cryptos and matched_stocks:
+            return QueryPlanResult(
+                intent="instant_finance_composite",
+                rewritten_query="가상화폐 및 주가지수 시세",
+                entities={"cryptos": matched_cryptos, "stocks": matched_stocks},
+                need_scrape=False,
+                need_instant_answer=True,
+            )
+        elif matched_cryptos:
+            return QueryPlanResult(
+                intent="instant_crypto",
+                rewritten_query=f"{matched_cryptos[0]} 시세",
+                entities={"cryptos": matched_cryptos},
+                need_scrape=False,
+                need_instant_answer=True,
+            )
+        elif matched_stocks:
+            return QueryPlanResult(
+                intent="instant_stock",
+                rewritten_query=f"{matched_stocks[0]} 지수",
+                entities={"stocks": matched_stocks},
+                need_scrape=False,
+                need_instant_answer=True,
+            )
+
+        # 4. 일반 웹 검색 의도
         return QueryPlanResult(
             intent="web_search",
             rewritten_query=cleaned_text,
@@ -124,12 +169,34 @@ class QueryPlanner:
             need_instant_answer=False,
         )
 
+    def _extract_cryptos(self, q: str) -> list[str]:
+        """쿼리에서 암호화폐 ID 목록을 추출한다."""
+        q_lower = q.lower()
+        found: list[str] = []
+        for kw, cid in self.crypto_keywords.items():
+            if kw in q_lower and cid not in found:
+                found.append(cid)
+        return found
+
+    def _extract_stocks(self, q: str) -> list[str]:
+        """쿼리에서 주가지수 심볼 목록을 추출한다."""
+        q_lower = q.lower()
+        found: list[str] = []
+        for kw, sym in self.stock_keywords.items():
+            if kw in q_lower and sym not in found:
+                found.append(sym)
+        return found
+
     def _clean_conversational_particles(self, q: str) -> str:
-        """대화형 종결어미 및 특수문자를 정제한다."""
+        """대화형 종결어미 및 불필요한 수식어를 정제하여 검색 품질을 극대화한다."""
         cleaned = re.sub(r"[\?!\.,~]+$", "", q.strip())
         patterns = [
-            r"\s*(?:어때|어떄|어떠니|어떨까|어떰|알려줘|알려줘요|알려주세요|알려줄래|알려주라|가르쳐줘|요약해줘|요약해줄래|설명해줘|설명해주세요|뭐야|뭐니|뭔지|알고\s*싶어|알고\s*싶어요|해줘|해줄래|해줘요|이야|인가요|인지|얼마니|얼마야|얼마인가요|얼마인가|얼마냐|얼마인지)$",
-            r"^(?:혹시|저기|그|음)\s+",
+            # 질문 종결형
+            r"\s*(?:어때|어떄|어떠니|어떨까|어떰|알려줘|알려줘요|알려주세요|알려줄래|알려주라|가르쳐줘|요약해줘|요약해줄래|설명해줘|설명해주세요|보여줘|정리해줘|추천해줘|뭐야|뭐니|뭔지|알고\s*싶어|알고\s*싶어요|해줘|해줄래|해줘요|이야|인가요|인지|얼마니|얼마야|얼마인가요|얼마인가|얼마냐|얼마인지)$",
+            # 헤드라인/개수 요청 수식어 정제 (예: "주요 헤드라인 3가지만", "최근 이슈 5개")
+            r"\s*(?:주요\s*)?(?:헤드라인|소식|뉴스\s*기사|이슈)?\s*(?:\d+가지(?:만)?|\d+개(?:만)?|몇\s*개(?:만)?|몇\s*가지)?$",
+            # 문두 접속/추임새
+            r"^(?:혹시|저기|그|음|오늘|최근의?|지금)\s+",
         ]
         for p in patterns:
             cleaned = re.sub(p, "", cleaned, flags=re.IGNORECASE).strip()

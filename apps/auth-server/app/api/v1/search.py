@@ -121,6 +121,8 @@ async def search_web(
     # ── 3. Instant Answer Layer (즉답형 위젯 처리) ─────────────────────────
     if plan.need_instant_answer:
         widget: Optional[WidgetResult] = None
+        source_url = "https://open-meteo.com"
+
         if plan.intent == "instant_weather":
             breaker = engine_breakers.get("open_meteo")
             if not breaker or await breaker.can_execute():
@@ -136,6 +138,7 @@ async def search_web(
                     await breaker.record_failure()
 
         elif plan.intent == "instant_currency":
+            source_url = "https://frankfurter.dev"
             breaker = engine_breakers.get("frankfurter")
             if not breaker or await breaker.can_execute():
                 widget = await instant_answer_service.get_exchange_rate(
@@ -148,6 +151,25 @@ async def search_web(
                 elif breaker:
                     await breaker.record_failure()
 
+        elif plan.intent == "instant_crypto":
+            source_url = "https://www.coingecko.com"
+            widget = await instant_answer_service.get_crypto_price(
+                coin_ids=plan.entities.get("cryptos", ["bitcoin"])
+            )
+
+        elif plan.intent == "instant_stock":
+            source_url = "https://finance.naver.com"
+            widget = await instant_answer_service.get_stock_index(
+                indices=plan.entities.get("stocks", ["KOSPI"])
+            )
+
+        elif plan.intent == "instant_finance_composite":
+            source_url = "https://finance.naver.com"
+            widget = await instant_answer_service.get_finance_composite(
+                cryptos=plan.entities.get("cryptos", []),
+                stocks=plan.entities.get("stocks", []),
+            )
+
         if widget:
             instant_response = SearchResponse(
                 query=q,
@@ -158,7 +180,7 @@ async def search_web(
                     SearchSnippet(
                         title=widget.title,
                         content=widget.summary_text,
-                        url="https://open-meteo.com" if plan.intent == "instant_weather" else "https://frankfurter.dev",
+                        url=source_url,
                     )
                 ],
                 compressed_context=widget.summary_text,
@@ -182,7 +204,7 @@ async def search_web(
     searxng_params = {
         "q": search_query,
         "format": "json",
-        "language": language,
+        "language": "all",  # SearXNG 엔진 언어 필터링 오작동 방지
         "categories": "general",
         "engines": ",".join(active_engines),
     }
