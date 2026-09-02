@@ -11,7 +11,7 @@ import type {
 } from '@repo/chat-state';
 import type { MobileAuthAdapter } from './MobileAuthAdapter';
 
-const API_HOST_FOR_APP = typeof __DEV__ !== 'undefined' && __DEV__ ? '127.0.0.1:8000' : '161.33.7.206:8000';
+const API_HOST_FOR_APP = '161.33.7.206:8000';
 const API_URL = `http://${API_HOST_FOR_APP}/api/v1/chats`;
 
 // /api/v1 베이스 URL (chats 경로 제거)
@@ -98,22 +98,25 @@ export class MobileRemoteChatAdapter implements RemoteChatClient {
   async searchWeb(query: string, maxResults = 5): Promise<SearchResponse> {
     const url = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&max_results=${maxResults}`;
 
-    // 모바일 어댑터: getAccessToken()은 비동기 (Promise<string | null>)
-    let token = await this.authAdapter.getAccessToken();
-    if (!token) {
-      const refreshed = await this.authAdapter.refresh();
-      token = refreshed?.accessToken || null;
+    let token: string | null = null;
+    try {
+      token = await this.authAdapter.getAccessToken();
+      if (!token) {
+        const refreshed = await this.authAdapter.refresh();
+        token = refreshed?.accessToken || null;
+      }
+    } catch (_) {}
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
-    if (!token) throw new Error('Not authenticated');
 
-    const res = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-    });
+    const res = await fetch(url, { headers });
 
-    if (res.status === 401) {
+    if (res.status === 401 && token) {
       const refreshed = await this.authAdapter.refresh();
       if (refreshed?.accessToken) {
         const retryRes = await fetch(url, {
@@ -122,8 +125,7 @@ export class MobileRemoteChatAdapter implements RemoteChatClient {
             'Authorization': `Bearer ${refreshed.accessToken}`,
           },
         });
-        if (!retryRes.ok) throw new Error(`Search API retry error ${retryRes.status}`);
-        return retryRes.json();
+        if (retryRes.ok) return retryRes.json();
       }
     }
 
