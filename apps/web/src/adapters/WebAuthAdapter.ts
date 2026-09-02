@@ -132,6 +132,9 @@ export class WebAuthAdapter implements AuthAdapter {
    */
   async startLogin(provider: SocialProvider): Promise<void> {
     try {
+      // 0단계: 이전 OAuth 잔여 데이터 즉시 정리
+      try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
+
       // 1단계: 백엔드에서 authorize_url 획득
       const startRes = await fetch(
         `${API_URL}/social/${provider}/start?redirect_uri=${encodeURIComponent(REDIRECT_URI)}&platform=web`,
@@ -376,11 +379,10 @@ export class WebAuthAdapter implements AuthAdapter {
     popup: Window
   ): Promise<Record<string, string>> {
     return new Promise((resolve, reject) => {
-      // 1. 이전 로그인 시도의 잔여 데이터 즉시 삭제 및 시작 시점 기록
+      // 1. 이전 잔여 데이터 즉시 정리
       try {
         localStorage.removeItem('oauth_callback_data');
       } catch (_) {}
-      const loginStartTime = Date.now();
 
       console.log('[WebAuthAdapter] Waiting for OAuth callback (COOP-safe)...');
       let settled = false;
@@ -398,36 +400,31 @@ export class WebAuthAdapter implements AuthAdapter {
         settle(undefined, new Error('OAuth 인증 시간이 초과되었습니다. (5분)'));
       }, 5 * 60 * 1000);
 
-      // ── Tier 1: postMessage (COOP 미적용 환경에서 작동) ──────────
+      // ── Tier 1: postMessage (COOP 미적용 환경) ───────────────────
       const handleMessage = (event: MessageEvent) => {
         if (event.data?.type === 'OAUTH_CALLBACK') {
           console.log('[WebAuthAdapter] postMessage received:', event.data);
           try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
           if (event.data.error) {
             settle(undefined, new Error(`OAuth 에러: ${event.data.error}`));
-          } else {
-            settle({ code: event.data.code, state: event.data.state });
+          } else if (event.data.code) {
+            settle({ code: event.data.code, state: event.data.state || '' });
           }
         }
       };
       window.addEventListener('message', handleMessage);
 
-      // ── Tier 2: storage 이벤트 (다른 탭/창에서 쓴 경우 발생) ─────
+      // ── Tier 2: storage 이벤트 (다른 탭/창에서 쓴 경우) ────────────
       const handleStorage = (event: StorageEvent) => {
         if (event.key === 'oauth_callback_data' && event.newValue) {
           console.log('[WebAuthAdapter] storage event received:', event.newValue);
           try {
             const data = JSON.parse(event.newValue);
             localStorage.removeItem('oauth_callback_data');
-            // 이전 로그인 잔여 데이터(stale) 무시
-            if (data.timestamp && data.timestamp < loginStartTime - 500) {
-              console.warn('[WebAuthAdapter] Ignoring stale storage event data:', data);
-              return;
-            }
             if (data.error) {
               settle(undefined, new Error(`OAuth 에러: ${data.error}`));
-            } else {
-              settle({ code: data.code, state: data.state });
+            } else if (data.code) {
+              settle({ code: data.code, state: data.state || '' });
             }
           } catch (e) {
             console.error('[WebAuthAdapter] storage event parse error:', e);
@@ -444,15 +441,10 @@ export class WebAuthAdapter implements AuthAdapter {
           if (event.data?.type === 'OAUTH_CALLBACK') {
             console.log('[WebAuthAdapter] BroadcastChannel received:', event.data);
             try { localStorage.removeItem('oauth_callback_data'); } catch (_) {}
-            // 이전 로그인 잔여 데이터(stale) 무시
-            if (event.data.timestamp && event.data.timestamp < loginStartTime - 500) {
-              console.warn('[WebAuthAdapter] Ignoring stale BroadcastChannel data:', event.data);
-              return;
-            }
             if (event.data.error) {
               settle(undefined, new Error(`OAuth 에러: ${event.data.error}`));
-            } else {
-              settle({ code: event.data.code, state: event.data.state });
+            } else if (event.data.code) {
+              settle({ code: event.data.code, state: event.data.state || '' });
             }
           }
         };
@@ -461,24 +453,17 @@ export class WebAuthAdapter implements AuthAdapter {
       }
 
       // ── Tier 4: localStorage 폴링 ─────────────────────────────────
-      // COOP 환경: 팝업이 같은 origin의 localStorage에 쓰고 닫힌 후
-      // storage 이벤트가 발생하지 않을 수 있음 → 직접 폴링
       const localStoragePoll = setInterval(() => {
         const stored = localStorage.getItem('oauth_callback_data');
         if (stored) {
           try {
             const data = JSON.parse(stored);
             localStorage.removeItem('oauth_callback_data');
-            // 이전 로그인 잔여 데이터(stale) 무시
-            if (data.timestamp && data.timestamp < loginStartTime - 500) {
-              console.warn('[WebAuthAdapter] Ignoring stale polled data:', data);
-              return;
-            }
-            console.log('[WebAuthAdapter] localStorage poll found valid fresh data:', data);
+            console.log('[WebAuthAdapter] localStorage poll found data:', data);
             if (data.error) {
               settle(undefined, new Error(`OAuth 에러: ${data.error}`));
-            } else {
-              settle({ code: data.code, state: data.state });
+            } else if (data.code) {
+              settle({ code: data.code, state: data.state || '' });
             }
           } catch (e) {
             console.error('[WebAuthAdapter] localStorage poll parse error:', e);
