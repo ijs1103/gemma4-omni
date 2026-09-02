@@ -11,7 +11,7 @@ import type {
 } from '@repo/chat-state';
 import type { MobileAuthAdapter } from './MobileAuthAdapter';
 
-const API_HOST_FOR_APP = '127.0.0.1:8000';
+const API_HOST_FOR_APP = typeof __DEV__ !== 'undefined' && __DEV__ ? '127.0.0.1:8000' : '161.33.7.206:8000';
 const API_URL = `http://${API_HOST_FOR_APP}/api/v1/chats`;
 
 // /api/v1 베이스 URL (chats 경로 제거)

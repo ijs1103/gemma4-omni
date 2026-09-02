@@ -46,11 +46,11 @@ react {
     // extraPackagerArgs = []
 
     /* Hermes Commands */
-    //   The hermes compiler command to run. By default it is 'hermesc'
-    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
-    //
-    //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
-    // hermesFlags = ["-O", "-output-source-map"]
+    def osBin = org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_MAC) ? "osx-bin" : "linux64-bin"
+    def hermescFiles = fileTree(dir: "../../../../node_modules", include: "**/hermesc/${osBin}/hermesc").files
+    if (!hermescFiles.isEmpty()) {
+        hermesCommand = hermescFiles.first().absolutePath
+    }
 
     /* Autolinking */
     autolinkLibrariesWithApp()

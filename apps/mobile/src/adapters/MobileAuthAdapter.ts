@@ -8,8 +8,8 @@ import { kakaoNativeLogin, naverNativeLogin } from './NativeLoginHelper';
 // 127.0.0.1:8000을 사용합니다.
 // Android Chrome Custom Tab에서 localhost는 DNS 이슈로 작동하지 않을 수 있지만,
 // 127.0.0.1은 IP 주소이므로 adb reverse를 통해 Host PC로 안전하게 포워딩됩니다.
-// 또한 구글 콘솔에서 HTTP loopback IP(127.0.0.1)를 Redirect URI로 허용합니다.
-const API_HOST_FOR_APP = '127.0.0.1:8000';
+// 개발 모드(__DEV__)에서는 adb reverse를 통한 127.0.0.1:8000, 릴리즈(스토어 배포)에서는 오라클 라이브 서버 IP 사용
+const API_HOST_FOR_APP = typeof __DEV__ !== 'undefined' && __DEV__ ? '127.0.0.1:8000' : '161.33.7.206:8000';
 const API_URL = `http://${API_HOST_FOR_APP}/api/v1/auth`;
 
 const WEB_LANDING_URI = `http://${API_HOST_FOR_APP}/api/v1/auth/social/mobile-landing`;
