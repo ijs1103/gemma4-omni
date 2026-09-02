@@ -34,7 +34,23 @@ const API_URL = (typeof window !== 'undefined' && window.location.protocol === '
   ? '/api/v1/auth'
   : RAW_AUTH_URL;
 
-const REDIRECT_URI = import.meta.env.VITE_AUTH_REDIRECT_URI || `${window.location.origin}/auth/callback`;
+// Vercel 미리보기 도메인 접속 시에도 Google Cloud Console에 등록된 공식 프로덕션 URI로 정규화
+const getCanonicalRedirectUri = (): string => {
+  if (import.meta.env.VITE_AUTH_REDIRECT_URI) {
+    return import.meta.env.VITE_AUTH_REDIRECT_URI;
+  }
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    // Vercel 호스팅 환경인 경우 항상 공인 프로덕션 redirect_uri 사용
+    if (window.location.hostname.endsWith('.vercel.app')) {
+      return 'https://gemma4-omni-web.vercel.app/auth/callback';
+    }
+    return `${origin}/auth/callback`;
+  }
+  return 'https://gemma4-omni-web.vercel.app/auth/callback';
+};
+
+const REDIRECT_URI = getCanonicalRedirectUri();
 
 // localStorage 키
 const STORAGE_KEY_SESSION = 'auth_session';
