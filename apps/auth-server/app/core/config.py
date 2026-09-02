@@ -41,8 +41,11 @@ class Settings(BaseSettings):
     # ── OAuth 공통 ────────────────────────────────────────────────
     OAUTH_STATE_TTL_SECONDS: int = 300
     ALLOWED_REDIRECT_URIS: list[str] = [
+        "https://gemma4-omni-web.vercel.app/auth/callback",
+        "https://gemma4-omni-web.vercel.app/api/v1/auth/social/mobile-landing",
         "http://localhost:3000/auth/callback",
         "http://localhost:5173/auth/callback",
+        "http://127.0.0.1:8000/api/v1/auth/social/mobile-landing",
     ]
 
     # ── Google OAuth ──────────────────────────────────────────────
