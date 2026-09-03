@@ -43,3 +43,23 @@ pnpm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+
+# Database & binary dumps
+*.db
+*.sqlite
+*.sqlite3
+*.bin
+apps/interrupt_retest_*.txt
+
+# Redundant package manager lockfiles (pnpm repo)
+package-lock.json
