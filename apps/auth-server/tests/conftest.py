@@ -27,7 +27,9 @@ def event_loop():
     yield loop
     loop.close()
 
-@pytest.fixture(autouse=True)
+import pytest_asyncio
+
+@pytest_asyncio.fixture(autouse=True)
 async def prepare_database():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -35,12 +37,12 @@ async def prepare_database():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with TestingSessionLocal() as session:
         yield session
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async def _override_get_db():
         yield db_session
