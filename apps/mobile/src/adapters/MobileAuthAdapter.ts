@@ -97,14 +97,17 @@ export class MobileAuthAdapter implements AuthAdapter {
    * 4. handleCallback()으로 토큰 발급 및 저장
    */
   async startLoginAndGetSession(provider: SocialProvider): Promise<AuthSession> {
-    // ── 카카오/네이버: 네이티브 SDK 사용 ──────────────────────────
-    // 네이티브 SDK는 Chrome Custom Tab을 사용하지 않으므로
-    // 127.0.0.1 루프백 차단 문제를 완전히 우회합니다.
+    // ── 카카오/네이버: 네이티브 SDK 우선 시도 ───────────────────
+    // 시뮬레이터 또는 앱 미설치로 인해 네이티브가 실패/취소되면 InAppBrowser 웹 로그인으로 자동 폴백합니다.
     if (provider === 'kakao' || provider === 'naver') {
-      return this._nativeSDKLogin(provider);
+      try {
+        return await this._nativeSDKLogin(provider);
+      } catch (nativeErr: any) {
+        console.warn(`[MobileAuth] ${provider} 네이티브 SDK 로그인 실패 (${nativeErr?.message}) -> InAppBrowser 웹 로그인으로 자동 전환합니다.`);
+      }
     }
 
-    // ── 구글/기타: InAppBrowser 사용 ─────────────────────────────
+    // ── 구글 및 네이티브 실패 시 폴백: InAppBrowser 사용 ─────────
     const redirectUri = WEB_LANDING_URI;
 
     // ── 1. 백엔드에서 authorize URL 획득 ──────────────────────────

@@ -15,15 +15,14 @@ const NAVER_CONFIG = {
   consumerSecret: '5AXyPPNYCM',
   appName: 'Gemma AI',
   serviceUrlSchemeIOS: 'com.mobile',
-  disableNaverAppAuthIOS: false,
+  disableNaverAppAuthIOS: true,
 };
 
 function ensureNaverInitialized(): void {
-  if (!naverInitialized) {
-    NaverLogin.initialize(NAVER_CONFIG);
-    naverInitialized = true;
-    console.log('[NativeLoginHelper] NaverLogin 초기화 완료 (iOS serviceUrlSchemeIOS 설정됨)');
-  }
+  // iOS 시뮬레이터 및 앱 미설치 환경 대응을 위해 항상 disableNaverAppAuthIOS=true로 초기화
+  NaverLogin.initialize(NAVER_CONFIG);
+  naverInitialized = true;
+  console.log('[NativeLoginHelper] NaverLogin 초기화 완료 (iOS disableNaverAppAuthIOS: true 설정됨)');
 }
 
 // ── 카카오 네이티브 로그인 ────────────────────────────────────────
