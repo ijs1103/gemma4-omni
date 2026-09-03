@@ -2637,7 +2637,7 @@ SPEC CHECKSUMS:
   Alamofire: f36a35757af4587d8e4f4bfa223ad10be2422b8c
   AsyncStorage: 163ab23f6aa37a58b7f2379d0b4ee7ac84d6655c
   FBLazyVector: 24e62c765683b8d89006a88a2c8f5cf019f0074d
-  hermes-engine: 72395a37f2290159ad2bef5184327b85cd5cec2f
+  hermes-engine: d646a78b84aa5cc7b5bdf9bac1230108beb56f3d
   kakao-login: c7b882cd279ca11f5b3abd15d0e0fcb41a427108
   KakaoSDKAuth: 569b377eda622d93d4575240b8031cd658163eef
   KakaoSDKCommon: d57127c339fc79e73aa8b236a4c77211c29924f1
@@ -2651,7 +2651,7 @@ SPEC CHECKSUMS:
   React: e2dc35338068bbd299c66f043ae0d7f25de8499e
   React-callinvoker: 28b25d21b124c26cebaea713ba7d801b9351dc48
   React-Core: 02ed7d2ffb70437bdf2aba074a13078a7b0b9ff0
-  React-Core-prebuilt: 857f5edb0d2f9244675ee51bf31860b3f8a61f90
+  React-Core-prebuilt: 4e92c292f3898baf692b603d71bd7bc8efdc8380
   React-CoreModules: b3a5a42dadcde3b5d47b325bd912eb2ced89e146
   React-cxxreact: fe8f88dda044e5905e99a00f41b7a874c3908716
   React-debug: 92944dc4d89f56d640e75498266cbde557a48189
@@ -2718,7 +2718,7 @@ SPEC CHECKSUMS:
   ReactAppDependencyProvider: 25c9c516839be2c5e3d3344f95dc7da5f7e63fc2
   ReactCodegen: 87b489cd46e023d68db30a2d1c77c24cbab278c6
   ReactCommon: 7dfc3250793bf36cf221096ff59e1179e13eef7f
-  ReactNativeDependencies: accd1018f2699b4d053715b819770115e94b5a37
+  ReactNativeDependencies: d62ee4b64dd8281ad57c5f56c2fe52f5791bc20d
   RNAppleAuthentication: a89c9804592b38ed4ab11f0aee68d05ba12ad432
   RNCClipboard: 715fa7c6c8366f17d00f05a439ee7488f390fa5f
   RNFS: 89de7d7f4c0f6bafa05343c578f61118c8282ed8

@@ -14,14 +14,15 @@ const NAVER_CONFIG = {
   consumerKey: 'WItE71ekHG37ubrbDEbY',
   consumerSecret: '5AXyPPNYCM',
   appName: 'Gemma AI',
-  serviceUrlScheme: 'com.mobile',
+  serviceUrlSchemeIOS: 'com.mobile',
+  disableNaverAppAuthIOS: false,
 };
 
 function ensureNaverInitialized(): void {
   if (!naverInitialized) {
     NaverLogin.initialize(NAVER_CONFIG);
     naverInitialized = true;
-    console.log('[NativeLoginHelper] NaverLogin 초기화 완료');
+    console.log('[NativeLoginHelper] NaverLogin 초기화 완료 (iOS serviceUrlSchemeIOS 설정됨)');
   }
 }
 

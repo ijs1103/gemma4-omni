@@ -2,6 +2,8 @@ import UIKit
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import NaverThirdPartyLogin
+import KakaoSDKAuth
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -30,6 +32,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     )
 
     return true
+  }
+
+  func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey : Any] = [:]
+  ) -> Bool {
+    // 1. 네이버 로그인 콜백 처리
+    if url.scheme == "com.mobile" {
+      if let isHandled = NaverThirdPartyLoginConnection.getSharedInstance()?.application(app, open: url, options: options), isHandled {
+        return true
+      }
+    }
+
+    // 2. 카카오 로그인 콜백 처리
+    if AuthApi.isKakaoTalkLoginUrl(url) {
+      return AuthController.handleOpenUrl(url: url)
+    }
+
+    // 3. React Native 범용 딥링크 및 인앱 브라우저 콜백 처리
+    return RCTLinkingManager.application(app, open: url, options: options)
   }
 }
 
