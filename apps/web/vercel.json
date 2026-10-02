@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/download",
+      "destination": "/download.html"
+    },
+    {
       "source": "/api/:path*",
       "destination": "http://161.33.7.206:8000/api/:path*"
     }
